@@ -1,4 +1,4 @@
 # LemonClaw
-LemonClaw 一个通用的AI数字员工Agent
+LemonClaw, a universal AI digital employee agent
 
 [简体中文](<README.md>) | [English](<README_EN.md>)

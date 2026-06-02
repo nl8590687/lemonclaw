@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -36,7 +37,7 @@ class GlobalConfig(BaseSettings):
     全局配置
     """
     OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "")
-    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    OPENAI_API_KEY: SecretStr = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
     MODEL_NAME: str = os.environ.get("MODEL_NAME", "")
     MODEL_MAX_TOKEN: int = int(os.environ.get("MODEL_MAX_TOKEN", 128000))
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
