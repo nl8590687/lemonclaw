@@ -2,3 +2,5 @@ langchain==1.3.2
 langchain-openai==1.2.2
 pydantic==2.13.4
 pydantic-settings==2.14.1
+ephem==4.2.1
+zhdate==0.1

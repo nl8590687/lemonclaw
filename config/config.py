@@ -1,3 +1,17 @@
+# Copyright 2026 LemonClaw Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 from pathlib import Path
 
@@ -42,6 +56,19 @@ class GlobalConfig(BaseSettings):
     MODEL_MAX_TOKEN: int = int(os.environ.get("MODEL_MAX_TOKEN", 128000))
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
     LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
+
+    BOCHA_API_URL: str|None = os.environ.get("BOCHA_API_URL")
+    BOCHA_API_KEY: str|None = os.environ.get("BOCHA_API_KEY")
+
+    EMAIL_SMTP_SERVER: str|None = os.environ.get("EMAIL_SMTP_SERVER")
+    EMAIL_SMTP_ENCRYPTION: str|None = os.environ.get("EMAIL_SMTP_ENCRYPTION", "SSL")
+    EMAIL_SMTP_PORT: int = int(os.environ.get("EMAIL_SMTP_PORT", 465))
+    EMAIL_SMTP_USERNAME: str|None = os.environ.get("EMAIL_SMTP_USERNAME")
+    EMAIL_SMTP_PASSWORD: str|None = os.environ.get("EMAIL_SMTP_PASSWORD")
+    EMAIL_FROM_NAME: str|None = os.environ.get("EMAIL_FROM_NAME", "LemonClaw")
+
+    ENABLE_BASH_TOOL: bool = str(os.environ.get("ENABLE_BASH_TOOL", "false")).lower() == "true"
+    FILE_SAFE_DIRS: list[str] = str(os.environ.get("FILE_SAFE_DIRS", "")).split(";")
 
     @classmethod
     def load(cls) -> "GlobalConfig":
