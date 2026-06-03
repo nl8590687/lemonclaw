@@ -68,24 +68,26 @@ class GlobalConfig(BaseSettings):
     EMAIL_FROM_NAME: str|None = os.environ.get("EMAIL_FROM_NAME", "LemonClaw")
 
     ENABLE_BASH_TOOL: bool = str(os.environ.get("ENABLE_BASH_TOOL", "false")).lower() == "true"
-    FILE_SAFE_DIRS: list[str] = str(os.environ.get("FILE_SAFE_DIRS", "")).split(";")
+    FILE_SAFE_DIRS: str = str(os.environ.get("FILE_SAFE_DIRS", ""))
 
-    @classmethod
-    def load(cls) -> "GlobalConfig":
-        """
-        从配置文件和环境变量加载配置
+    AGENT_REACT_MAX_ITERATIONS: int = int(os.environ.get("AGENT_REACT_MAX_ITERATIONS", 20))
 
-        Return:
-            配置对象
-        """
-        # 首先加载 .env
 
-        env_path = find_config_file(".env")
-        if env_path and env_path.exists():
-            load_dotenv(env_path)
+def load_config() -> GlobalConfig:
+    """
+    从配置文件和环境变量加载配置
 
-        # 创建配置对象，YAML 配置会覆盖默认值，环境变量会覆盖 YAML
-        return cls()
+    Return:
+        配置对象
+    """
+    # 首先加载 .env
+
+    env_path = find_config_file(".env")
+    if env_path and env_path.exists():
+        load_dotenv(env_path)
+
+    # 创建配置对象，YAML 配置会覆盖默认值，环境变量会覆盖 YAML
+    return GlobalConfig()
 
 
 # 全局配置实例（延迟加载）
@@ -101,5 +103,5 @@ def get_global_config() -> GlobalConfig:
     """
     global _global_config
     if _global_config is None:
-        _global_config = GlobalConfig.load()
+        _global_config = load_config()
     return _global_config

@@ -39,23 +39,18 @@ class EditFileTool(BaseTool):
     # 使用 model_config 允许额外字段
     model_config = {"extra": "allow"}
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, safe_dirs: list[str]):
         """
         初始化工具
 
         Args:
-            config: 配置字典，可包含 safe_dirs 列表
+            safe_dirs: 安全目录列表
         """
         super().__init__()
-        self._safe_dirs: List[str] = []
-
-        if config:
-            self._safe_dirs = config.get("safe_dirs", [])
-            if not self._safe_dirs:
-                try:
-                    self._safe_dirs.append(str(Path.cwd().resolve()))
-                except Exception:
-                    pass
+        self._safe_dirs: List[str] = safe_dirs
+        # 自动添加当前工作目录到安全目录（如果没配置）
+        if not self._safe_dirs:
+            self._safe_dirs.append(str(Path.cwd().resolve()))
 
     def _is_path_safe(self, target_path: str) -> bool:
         """检查路径是否安全"""

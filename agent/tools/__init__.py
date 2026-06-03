@@ -55,18 +55,19 @@ def create_tool_list() -> dict[str, Any]:
     创建所有工具
     """
     config = get_global_config()
+    file_safe_dirs = config.FILE_SAFE_DIRS.split(";")
     tools = [
         create_time_tool(),
         create_http_request_tool(),
         create_web_fetch_tool(),
         create_git_tool(),
         create_sleep_tool(),
-        create_file_list_query_tool(config.FILE_SAFE_DIRS),
-        create_read_file_tool(config.FILE_SAFE_DIRS),
-        create_write_file_tool(config.FILE_SAFE_DIRS),
-        create_edit_file_tool(config.FILE_SAFE_DIRS),
-        create_grep_tool(config.FILE_SAFE_DIRS),
-        create_glob_tool(config.FILE_SAFE_DIRS),
+        create_file_list_query_tool(file_safe_dirs),
+        create_read_file_tool(file_safe_dirs),
+        create_write_file_tool(file_safe_dirs),
+        create_edit_file_tool(file_safe_dirs),
+        create_grep_tool(file_safe_dirs),
+        create_glob_tool(file_safe_dirs),
     ]
 
     if config.BOCHA_API_KEY:
