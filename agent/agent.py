@@ -147,3 +147,22 @@ class AgentService:
                 "tool_count": 0,
                 "system_count": 0
             }
+
+    def reset_session(self):
+        self.checkpointer = MemorySaver()
+        self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer)
+        self.stats = {
+            "context_tokens": {
+                "total_prompt_tokens": 0,
+                "total_completion_tokens": 0,
+                "context_total_tokens": 0,
+            },
+            "context_messages": {
+                "memory_tokens": 0,
+                "human_count": 0,
+                "ai_count": 0,
+                "tool_count": 0,
+                "system_count": 0,
+                "message_count": 0,
+            }
+        }

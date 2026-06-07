@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright 2026 LemonClaw Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,23 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-import uuid
+from config import get_global_config
+from loop import start_event_source, loop_forever
 
-class BaseInChannel:
-    def __init__(self):
-        self.thread: threading.Thread|None = None
-        self._stopped = threading.Event()
 
-    def start(self):
-        self.thread = threading.Thread(target=self.run, daemon=True, name=f"{self.__class__.__name__}_{str(uuid.uuid4())}")
-        self.thread.start()
-
-    def stop(self):
-        self._stopped.set()
-
-    def stopped(self):
-        return self._stopped.is_set()
-
-    def run(self):
-        raise NotImplementedError
+if __name__ == "__main__":
+    config = get_global_config()
+    start_event_source()
+    loop_forever()

@@ -31,5 +31,5 @@ class BaseOutChannel:
     def write_tool_error(self, error: BaseException):
         raise NotImplementedError
 
-    def write_menu_content(self, content: str):
+    def write_menu_content(self, content: object):
         raise NotImplementedError

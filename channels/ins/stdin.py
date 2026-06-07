@@ -28,16 +28,16 @@ class TerminalInput(BaseInChannel):
         self.console = get_console()
 
     def run(self):
-        while True:
+        while not self.stopped():
             try:
                 user_input = self.console.input("[bold green]你[/] > ").strip()
                 if not user_input:
                     continue
                 self._write_message(user_input)
-            except KeyboardInterrupt as ex:
-                self.console.print("\n\n[warning]再见！[/warning]")
+            except KeyboardInterrupt:
+                self.stop()
                 break
-            except EOFError as ex:
+            except EOFError:
                 continue
 
     def _write_message(self, msg: str, img_urls: list[str] | None = None, context: dict[str, object] = None) -> str:

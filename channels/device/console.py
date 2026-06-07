@@ -36,7 +36,7 @@ _console_instance: Console|None = None
 _bus_lock = threading.Lock()
 
 
-def _print_welcome(console: Console):
+def print_welcome(console: Console):
     console.print()
     console.print(
         Panel(
@@ -60,5 +60,5 @@ def get_console() -> Console:
         with _bus_lock:
             if _console_instance is None:
                 _console_instance = Console(theme=custom_theme)
-                _print_welcome(_console_instance)
+                print_welcome(_console_instance)
     return _console_instance

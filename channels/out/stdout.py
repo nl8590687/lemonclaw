@@ -92,3 +92,7 @@ class TerminalOutputChannel(BaseOutChannel):
 
         self.console.print(table)
         self.console.print()
+
+    def write_menu_content(self, content: object):
+        self.console.print(content)
+        self.console.print()
