@@ -12,24 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.theme import Theme
 
+from channels.device.console import get_console
 from channels.out.base import BaseOutChannel
-from config import constants
-
-custom_theme = Theme(
-    {
-        "info": "cyan",
-        "warning": "yellow",
-        "error": "red bold",
-        "success": "green",
-    }
-)
 
 
 class TerminalOutputChannel(BaseOutChannel):
@@ -38,22 +26,7 @@ class TerminalOutputChannel(BaseOutChannel):
     """
     def __init__(self):
         super().__init__()
-        self.console = Console(theme=custom_theme)
-        self._print_welcome()
-
-    def _print_welcome(self):
-        self.console.print()
-        self.console.print(
-            Panel(
-                Text.from_markup(
-                    f"[bold cyan]{constants.LOGO_STR} {constants.NAME_EN}[/bold cyan] — {constants.NAME_CN}\n\n"
-                    f"[dim]{constants.DESCRIPTION}[/dim]"
-                ),
-                border_style="cyan",
-                padding=(1, 6),
-            )
-        )
-        self.console.print()
+        self.console = get_console()
 
     def write_message(self, msg: str, context: dict[str, object]):
         self.console.print()
@@ -83,7 +56,7 @@ class TerminalOutputChannel(BaseOutChannel):
     def write_tool_error(self, error: BaseException):
         self.console.print(Text(f"  工具错误: {error}", style="bold red"))
 
-    def _display_token_stats(self, context: dict[str, object]):
+    def _display_token_stats(self, context: dict[str, dict[str, object]|object]):
         if not isinstance(context, dict):
             context = {}
 
