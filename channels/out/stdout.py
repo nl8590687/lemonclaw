@@ -65,6 +65,9 @@ class TerminalOutputChannel(BaseOutChannel):
         self._display_token_stats(context)
         self.console.rule(style="blue")
 
+    def print(self, msg: str):
+        self.console.print(msg, end="", highlight=False)
+
     def write_tool_calling(self, tool_name: str, param_str: str):
         self.console.print()
         self.console.print(
@@ -76,6 +79,9 @@ class TerminalOutputChannel(BaseOutChannel):
         if len(output_str) > 300:
             output_str = output_str[:300] + "..."
         self.console.print(Text(f"  结果: {output_str}", style="dim"))
+
+    def write_tool_error(self, error: BaseException):
+        self.console.print(Text(f"  工具错误: {error}", style="bold red"))
 
     def _display_token_stats(self, context: dict[str, object]):
         if not isinstance(context, dict):
@@ -95,9 +101,9 @@ class TerminalOutputChannel(BaseOutChannel):
         )
         table.add_row(
             "会话累计:",
-            f"输入 {context.get("tokens", {}).get('total_prompt_tokens', 0)} / "
-            f"输出 {context.get("tokens", {}).get('total_completion_tokens', 0)} / "
-            f"总计 {context.get("tokens", {}).get('total_tokens', 0)} tokens",
+            f"输入 {context.get("context_tokens", {}).get('total_prompt_tokens', 0)} / "
+            f"输出 {context.get("context_tokens", {}).get('total_completion_tokens', 0)} / "
+            f"总计 {context.get("context_tokens", {}).get('context_total_tokens', 0)} tokens",
         )
 
         # 更详细的消息统计

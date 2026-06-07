@@ -19,10 +19,16 @@ class BaseOutChannel:
     def write_message(self, msg: str, context: dict[str, object]):
         raise NotImplementedError
 
+    def print(self, msg: str):
+        raise NotImplementedError
+
     def write_tool_calling(self, tool_name: str, param_str: str):
         raise NotImplementedError
 
     def write_tool_result(self, output: object):
+        raise NotImplementedError
+
+    def write_tool_error(self, error: BaseException):
         raise NotImplementedError
 
     def write_menu_content(self, content: str):
