@@ -65,6 +65,7 @@ def loop_forever():
                 context = event_msg.context
                 res = svr.run(msg_text.strip(), context)
                 handle_response(event_msg, res)
+            svr.trim_msg_history()
         except KeyboardInterrupt:
             break
         except EOFError:

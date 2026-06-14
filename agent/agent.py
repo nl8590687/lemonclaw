@@ -48,6 +48,8 @@ class AgentService:
         self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer)
         self.session_id = "session-default"
         self.max_iterations = config.AGENT_REACT_MAX_ITERATIONS
+        self.min_full_messages = config.CONTEXT_MIN_FULL_MESSAGES
+        self.model_max_tokens = config.MODEL_MAX_TOKEN
         self.default_out_chan = TerminalOutputChannel()
         self.stats = {
             "context_tokens": {
@@ -97,7 +99,8 @@ class AgentService:
         self.stats["context_tokens"]["context_total_tokens"] += tokens_stats["total_tokens"]
 
         mem_stats = self.get_memory_stats()
-        self.stats["context_messages"]["memory_tokens"] = mem_stats["memory_tokens"]
+        self.stats["context_messages"]["memory_tokens"] = tokens_stats["memory_tokens"]
+        #self.stats["context_messages"]["memory_tokens"] = mem_stats["memory_tokens"]
         self.stats["context_messages"]["human_count"] = mem_stats["human_count"]
         self.stats["context_messages"]["ai_count"] = mem_stats["ai_count"]
         self.stats["context_messages"]["tool_count"] = mem_stats["tool_count"]
@@ -131,7 +134,6 @@ class AgentService:
                     system_count += 1
 
             return {
-                "memory_tokens": 0,
                 "message_count": len(messages),
                 "human_count": human_count,
                 "ai_count": ai_count,
@@ -140,7 +142,6 @@ class AgentService:
             }
         except Exception as e:
             return {
-                "memory_tokens": 0,
                 "message_count": 0,
                 "human_count": 0,
                 "ai_count": 0,
@@ -166,3 +167,51 @@ class AgentService:
                 "message_count": 0,
             }
         }
+
+    def trim_msg_history(self):
+        try:
+            cfg = {"configurable": {"thread_id": self.session_id}}
+            state = self.agent.get_state(cfg)
+            messages = state.values.get("messages", [])
+            new_messages = []
+            changed = False
+            msg_count = len(messages)
+
+            # trim each message content
+            for idx, msg in enumerate(messages):
+                # trim each tool message content
+                if msg_count - idx > self.min_full_messages and isinstance(msg, ToolMessage) and msg.content and len(msg.content) > 500:
+                    new_messages.append(
+                        msg.model_copy(update={
+                            "content": msg.content[:200] + " <full-message-has-been-trimmed> " + msg.content[-200:]
+                        })
+                    )
+                    changed = True
+                # trim each AI tool call message
+                elif msg_count - idx > self.min_full_messages and isinstance(msg, AIMessage) and msg.tool_calls:
+                    new_tool_calls = []
+                    for tool_call in msg.tool_calls:
+                        new_tool_call = {
+                            "name": tool_call.get("name"),
+                            "id": tool_call.get("id"),
+                            "type": tool_call.get("type"),
+                            "args": tool_call.get("args") or {}
+                        }
+                        for key, value in tool_call.get("args", {}).items():
+                            if len(str(value)) > 500:
+                                value_str = str(value)
+                                new_tool_call["args"][key] = value_str[:200] + " <full-arg-value-was-too-long-and-has-been-trimmed> " + value_str[-200:]
+                        new_tool_calls.append(new_tool_call)
+                    new_messages.append(msg.model_copy(update={"tool_calls": new_tool_calls}))
+                    changed = True
+                else:
+                    new_messages.append(msg)
+
+            # trim total message tokens
+            if msg_count > self.min_full_messages and self.stats["context_messages"]["memory_tokens"] >= 0.8 * self.model_max_tokens:
+                pass # TODO
+
+            if changed:
+                self.agent.update_state(cfg, {"messages": new_messages})
+        except Exception as ex:
+            self.default_out_chan.write_system_error(f"error: cut message history exception\n{ex}")

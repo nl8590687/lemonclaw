@@ -36,6 +36,7 @@ class StreamingCallback(BaseCallbackHandler):
             "completion_tokens": 0,
             "total_tokens": 0,
             "successful_requests": 0,
+            "memory_tokens": 0
         }
 
     def on_llm_new_token(self, token: str, **kwargs):
@@ -50,6 +51,8 @@ class StreamingCallback(BaseCallbackHandler):
                 if hasattr(generation, "message") and hasattr(generation.message, "usage_metadata"):
                     usage = generation.message.usage_metadata
                     if usage:
+                        self.tokens["memory_tokens"] = max(usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                                                            usage.get("total_tokens", 0))
                         self.tokens["prompt_tokens"] += usage.get("input_tokens", 0)
                         self.tokens["completion_tokens"] += usage.get("output_tokens", 0)
                         self.tokens["total_tokens"] += usage.get("total_tokens",

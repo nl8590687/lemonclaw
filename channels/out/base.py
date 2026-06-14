@@ -33,3 +33,6 @@ class BaseOutChannel:
 
     def write_menu_content(self, content: object):
         raise NotImplementedError
+
+    def write_system_error(self, content: str):
+        raise NotImplementedError

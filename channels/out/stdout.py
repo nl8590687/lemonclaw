@@ -96,3 +96,6 @@ class TerminalOutputChannel(BaseOutChannel):
     def write_menu_content(self, content: object):
         self.console.print(content)
         self.console.print()
+
+    def write_system_error(self, content: str):
+        self.console.print(f"[error]{content}[/]")
