@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import Optional, Type, List
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from channels.device.console import get_console
 
 
 class ReadFileInput(BaseModel):
@@ -229,17 +234,17 @@ class WriteFileTool(BaseTool):
         except Exception:
             return False
 
-    def _show_diff(self, old_content: str, new_content: str) -> None:
+    def _show_diff(self, old_content: str, new_content: str, filepath: str = "") -> None:
         """
-        显示文件内容差异（带行号）
+        使用 rich 显示文件内容差异（带行号和颜色）
 
         Args:
             old_content: 原内容
             new_content: 新内容
+            filepath: 文件路径（用于面板标题）
         """
-        print("\n" + "="*80)
-        print("文件变更差异:")
-        print("="*80)
+        console = get_console()
+        title = f"文件变更: {filepath}" if filepath else "文件变更差异"
 
         old_lines = old_content.splitlines(keepends=True)
         new_lines = new_content.splitlines(keepends=True)
@@ -248,35 +253,34 @@ class WriteFileTool(BaseTool):
         diff_result = list(differ.compare(old_lines, new_lines))
 
         if not diff_result or all(line.startswith("  ") for line in diff_result):
-            print("(内容未发生变化)")
-            print("="*80 + "\n")
+            console.print(Panel("[dim](内容未发生变化)[/dim]", title=title, border_style="cyan"))
             return
+
+        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 1), expand=True)
+        table.add_column("旧", justify="right", style="dim", no_wrap=True, width=5)
+        table.add_column("新", justify="right", style="dim", no_wrap=True, width=5)
+        table.add_column("内容", overflow="fold")
 
         old_line_num = 0
         new_line_num = 0
 
         for line in diff_result:
-            # 移除行尾换行符用于显示
             display_line = line.rstrip("\r\n")
 
             if line.startswith("  "):
-                # 未变化的行
                 old_line_num += 1
                 new_line_num += 1
-                print(f"{old_line_num:4d} {new_line_num:4d}   {display_line}")
+                table.add_row(str(old_line_num), str(new_line_num), Text(f"  {display_line[2:]}", style="dim"))
             elif line.startswith("- "):
-                # 删除的行
                 old_line_num += 1
-                print(f"{old_line_num:4d}        \033[1;31m- {display_line[2:]}\033[0m")
+                table.add_row(str(old_line_num), "", Text(f"- {display_line[2:]}", style="bold red"))
             elif line.startswith("+ "):
-                # 新增的行
                 new_line_num += 1
-                print(f"        {new_line_num:4d} \033[1;32m+ {display_line[2:]}\033[0m")
+                table.add_row("", str(new_line_num), Text(f"+ {display_line[2:]}", style="bold green"))
             elif line.startswith("? "):
-                # 提示行
-                print(f"              \033[1;33m{display_line}\033[0m")
+                table.add_row("", "", Text(display_line, style="bold yellow"))
 
-        print("="*80 + "\n")
+        console.print(Panel(table, title=title, border_style="cyan"))
 
     def _run(self, *args, **kwargs) -> str:
         """
@@ -349,7 +353,7 @@ class WriteFileTool(BaseTool):
                     return "错误：写入失败，文件已被外部编辑。请重新读取文件后再尝试修改。"
 
                 # 显示差异
-                self._show_diff(old_content, content)
+                self._show_diff(old_content, content, str(target_file))
 
                 # 写入新内容
                 with open(target_file, "w", encoding="utf-8") as f:
@@ -367,7 +371,7 @@ class WriteFileTool(BaseTool):
                     return "错误：创建新文件时 old_content 应该为空"
 
                 # 显示差异（从空到新内容）
-                self._show_diff("", content)
+                self._show_diff("", content, str(target_file))
 
                 with open(target_file, "w", encoding="utf-8") as f:
                     f.write(content)
