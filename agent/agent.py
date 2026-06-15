@@ -20,12 +20,13 @@ from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.llm import create_openai_llm, get_system_prompt
 from agent.tools import create_tool_list
 from agent.callback import StreamingCallback
+from agent.context_agent import ContextAgent
 from channels.out.stdout import TerminalOutputChannel
 from config import get_global_config
 
@@ -209,7 +210,13 @@ class AgentService:
 
             # trim total message tokens
             if msg_count > self.min_full_messages and self.stats["context_messages"]["memory_tokens"] >= 0.8 * self.model_max_tokens:
-                pass # TODO
+                p = len(new_messages) if self.min_full_messages == 0 else -self.min_full_messages
+                need_sum_msgs = new_messages[:p]
+                ctx_agent = ContextAgent()
+                txt = ctx_agent.run(need_sum_msgs)
+                remove_msgs = [RemoveMessage(id=msg.id) for msg in need_sum_msgs]
+                new_messages = remove_msgs + [HumanMessage(content=f"稍早前对话内容摘要：\n{txt}")] + new_messages[p:]
+                changed = True
 
             if changed:
                 self.agent.update_state(cfg, {"messages": new_messages})
