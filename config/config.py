@@ -73,6 +73,12 @@ class GlobalConfig(BaseSettings):
     AGENT_REACT_MAX_ITERATIONS: int = int(os.environ.get("AGENT_REACT_MAX_ITERATIONS", 20))
     CONTEXT_MIN_FULL_MESSAGES: int = int(os.environ.get("CONTEXT_MIN_FULL_MESSAGES", 20))
 
+    ENABLE_WEBHOOK: bool = str(os.environ.get("ENABLE_WEBHOOK", "false")).lower() == "true"
+    WEBHOOK_HOST: str|None = os.environ.get("WEBHOOK_HOST", "127.0.0.1")
+    WEBHOOK_PORT: int = int(os.environ.get("WEBHOOK_PORT", 8765))
+    WEBHOOK_AUTH_TOKEN: str|None = os.environ.get("WEBHOOK_AUTH_TOKEN", "")
+    WEBHOOK_RATE_LIMIT_RPM: int = int(os.environ.get("WEBHOOK_RATE_LIMIT_RPM", 10))
+
 
 def load_config() -> GlobalConfig:
     """

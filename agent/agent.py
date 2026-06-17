@@ -101,7 +101,6 @@ class AgentService:
 
         mem_stats = self.get_memory_stats()
         self.stats["context_messages"]["memory_tokens"] = tokens_stats["memory_tokens"]
-        #self.stats["context_messages"]["memory_tokens"] = mem_stats["memory_tokens"]
         self.stats["context_messages"]["human_count"] = mem_stats["human_count"]
         self.stats["context_messages"]["ai_count"] = mem_stats["ai_count"]
         self.stats["context_messages"]["tool_count"] = mem_stats["tool_count"]
