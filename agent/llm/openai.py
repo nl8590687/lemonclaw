@@ -25,7 +25,7 @@ def create_openai_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=global_config.MODEL_NAME,
         temperature=global_config.TEMPERATURE,
-        max_tokens=global_config.MODEL_MAX_TOKEN,
+        max_tokens=global_config.MODEL_MAX_COMPLETION_TOKEN,
         streaming=True,
         stream_usage=True,
         base_url=global_config.OPENAI_BASE_URL,

@@ -34,7 +34,7 @@ class TestCreateOpenaiLlm(unittest.TestCase):
     """
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-api-key", "OPENAI_BASE_URL": "http://test-url",
-                             "MODEL_NAME": "deepseek-v4-flash", "MODEL_MAX_TOKEN": "32000"})
+                             "MODEL_NAME": "deepseek-v4-flash", "MODEL_MAX_COMPLETION_TOKEN": "32000"})
     def test_create_llm(self):
         """测试创建LLM"""
         llm = create_openai_llm()

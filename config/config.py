@@ -53,7 +53,8 @@ class GlobalConfig(BaseSettings):
     OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "")
     OPENAI_API_KEY: SecretStr = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
     MODEL_NAME: str = os.environ.get("MODEL_NAME", "")
-    MODEL_MAX_TOKEN: int = int(os.environ.get("MODEL_MAX_TOKEN", 128000))
+    MODEL_CONTEXT_LENGTH: int = int(os.environ.get("MODEL_CONTEXT_LENGTH", 128000))
+    MODEL_MAX_COMPLETION_TOKEN: int = int(os.environ.get("MODEL_MAX_COMPLETION_TOKEN", 128000))
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
     LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
 

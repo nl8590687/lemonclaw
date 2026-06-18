@@ -50,7 +50,8 @@ class AgentService:
         self.session_id = "session-default"
         self.max_iterations = config.AGENT_REACT_MAX_ITERATIONS
         self.min_full_messages = config.CONTEXT_MIN_FULL_MESSAGES
-        self.model_max_tokens = config.MODEL_MAX_TOKEN
+        self.model_context_length = config.MODEL_CONTEXT_LENGTH
+        self.model_max_tokens = config.MODEL_MAX_COMPLETION_TOKEN
         self.default_out_chan = TerminalOutputChannel()
         self.stats = {
             "context_tokens": {
@@ -208,7 +209,7 @@ class AgentService:
                     new_messages.append(msg)
 
             # trim total message tokens
-            if msg_count > self.min_full_messages and self.stats["context_messages"]["memory_tokens"] >= 0.8 * self.model_max_tokens:
+            if msg_count > self.min_full_messages and self.stats["context_messages"]["memory_tokens"] >= 0.8 * self.model_context_length:
                 p = len(new_messages) if self.min_full_messages == 0 else -self.min_full_messages
                 need_sum_msgs = new_messages[:p]
                 ctx_agent = ContextAgent()
