@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright 2026 LemonClaw Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,6 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from channels.out.base import BaseOutChannel
-from channels.out.stdout import TerminalOutputChannel
-from channels.out.feishu import FeishuOutputChannel
+"""
+LemonClaw 数据访问层
+
+整个项目只允许使用一个 sqlite 数据库文件 ``.lemonclaw/lemonclaw.db``，
+所有 DAO 通过 ``dao.db.get_connection`` 共享该连接。
+"""
+
+from dao.db import get_connection, get_db_path, execute, query_one, query_all
+from dao.cron_task import CronTask, CronTaskDAO, ensure_schema as ensure_cron_schema
+
+__all__ = [
+    "get_connection",
+    "get_db_path",
+    "execute",
+    "query_one",
+    "query_all",
+    "CronTask",
+    "CronTaskDAO",
+    "ensure_cron_schema",
+]

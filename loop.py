@@ -16,13 +16,13 @@
 """
 Loop forever
 """
-
+from langchain_core.messages import AIMessage
 from rich.text import Text
 
 from agent.agent import AgentService
 from channels.bus import get_bus, EventMessage, EventType
-from channels.ins import TerminalInput, WebhookInput
-from channels.out import BaseOutChannel, TerminalOutputChannel
+from channels.ins import TerminalInput, WebhookInput, FeishuInput, CrontabInput
+from channels.out import BaseOutChannel, TerminalOutputChannel, FeishuOutputChannel
 from command import handle_command
 
 
@@ -36,6 +36,12 @@ def start_event_source():
     webhook = WebhookInput()
     webhook.start()
     _event_sources.append(webhook)
+    crontab = CrontabInput()
+    crontab.start()
+    _event_sources.append(crontab)
+    feishu = FeishuInput()
+    feishu.start()
+    _event_sources.append(feishu)
 
 
 def stop_event_source():
@@ -43,8 +49,15 @@ def stop_event_source():
         event_source.stop()
 
 
-def handle_response(event_msg: EventMessage, response_text: str):
-    pass
+def handle_response(out_chan: BaseOutChannel, event_msg: EventMessage, response_text: dict[str, object]):
+    msg_list = response_text.get("messages", [])
+    rsp_msg = msg_list[-1] if msg_list and isinstance(msg_list[-1], AIMessage) else None
+    rsp_content = rsp_msg.content if rsp_msg else ""
+    if not rsp_content:
+        return
+
+    if event_msg.event_type.value == EventType.LARK_MESSAGE.value:
+        out_chan.write_message(rsp_content, event_msg.context)
 
 
 def get_output_channel(event_msg: EventMessage) -> BaseOutChannel:
@@ -53,6 +66,10 @@ def get_output_channel(event_msg: EventMessage) -> BaseOutChannel:
         return TerminalOutputChannel()
     if event_type.value == EventType.WEBHOOK.value:
         return TerminalOutputChannel()
+    if event_type.value == EventType.SCHEDULED_TASK.value:
+        return TerminalOutputChannel()
+    if event_type.value == EventType.LARK_MESSAGE.value:
+        return FeishuOutputChannel()
     return TerminalOutputChannel()
 
 
@@ -77,7 +94,7 @@ def loop_forever():
             else:
                 context = event_msg.context
                 res = svr.run(msg_text.strip(), context)
-                handle_response(event_msg, res)
+                handle_response(out_chan, event_msg, res)
             svr.trim_msg_history()
         except KeyboardInterrupt:
             break

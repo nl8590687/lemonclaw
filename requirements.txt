@@ -5,3 +5,4 @@ pydantic-settings==2.14.1
 ephem==4.2.1
 zhdate==0.1
 rich==15.0.0
+lark_oapi==1.6.8

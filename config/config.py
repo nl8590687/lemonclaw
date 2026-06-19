@@ -80,6 +80,11 @@ class GlobalConfig(BaseSettings):
     WEBHOOK_AUTH_TOKEN: str|None = os.environ.get("WEBHOOK_AUTH_TOKEN", "")
     WEBHOOK_RATE_LIMIT_RPM: int = int(os.environ.get("WEBHOOK_RATE_LIMIT_RPM", 10))
 
+    # 飞书（Lark）
+    ENABLE_FEISHU: bool = str(os.environ.get("ENABLE_FEISHU", "false")).lower() == "true"
+    FEISHU_APP_ID: str|None = os.environ.get("FEISHU_APP_ID", "")
+    FEISHU_APP_SECRET: SecretStr = SecretStr(os.environ.get("FEISHU_APP_SECRET", ""))
+
 
 def load_config() -> GlobalConfig:
     """

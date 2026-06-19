@@ -22,7 +22,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Callable
 
 from config import get_global_config
-from channels.bus import EventMessage, EventType, EventPriority
 
 
 _webhook_callback_function: Callable[[str, list[str] | None, dict[str, object]], str] | None = None
