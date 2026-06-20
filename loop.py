@@ -24,24 +24,31 @@ from channels.bus import get_bus, EventMessage, EventType
 from channels.ins import TerminalInput, WebhookInput, FeishuInput, CrontabInput
 from channels.out import BaseOutChannel, TerminalOutputChannel, FeishuOutputChannel
 from command import handle_command
+from config import get_global_config
 
 
 _event_sources = []
 
 
 def start_event_source():
+    config = get_global_config()
     terminal = TerminalInput()
     terminal.start()
     _event_sources.append(terminal)
-    webhook = WebhookInput()
-    webhook.start()
-    _event_sources.append(webhook)
+
+    if config.ENABLE_WEBHOOK:
+        webhook = WebhookInput()
+        webhook.start()
+        _event_sources.append(webhook)
+
     crontab = CrontabInput()
     crontab.start()
     _event_sources.append(crontab)
-    feishu = FeishuInput()
-    feishu.start()
-    _event_sources.append(feishu)
+
+    if config.ENABLE_FEISHU:
+        feishu = FeishuInput()
+        feishu.start()
+        _event_sources.append(feishu)
 
 
 def stop_event_source():
@@ -61,14 +68,15 @@ def handle_response(out_chan: BaseOutChannel, event_msg: EventMessage, response_
 
 
 def get_output_channel(event_msg: EventMessage) -> BaseOutChannel:
+    config = get_global_config()
     event_type = event_msg.event_type
     if event_type.value == EventType.TERMINAL.value:
         return TerminalOutputChannel()
-    if event_type.value == EventType.WEBHOOK.value:
+    if config.ENABLE_WEBHOOK and event_type.value == EventType.WEBHOOK.value:
         return TerminalOutputChannel()
     if event_type.value == EventType.SCHEDULED_TASK.value:
         return TerminalOutputChannel()
-    if event_type.value == EventType.LARK_MESSAGE.value:
+    if config.ENABLE_FEISHU and event_type.value == EventType.LARK_MESSAGE.value:
         return FeishuOutputChannel()
     return TerminalOutputChannel()
 
