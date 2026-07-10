@@ -393,3 +393,27 @@ class CronTaskManager:
     def mark_run(self, task_id: str) -> None:
         """记录任务执行时间（投递成功后或处理完成后调用）"""
         self.dao.update_last_run(task_id, datetime.now())
+
+
+# =====================================================================
+# 全局单例
+# =====================================================================
+#
+# Agent 工具（``agent.tools.cron_tool``）、``/cron`` 指令
+# （``command.py``）与 ``CrontabInput`` 必须共享同一个 manager 实例，
+# 否则新建的任务进不了正在运行的调度器。这里提供与 ``get_bus`` 同构的
+# 全局单例获取函数；``CrontabInput`` 负责在启动时把 ``_write_message``
+# 通过 ``set_on_trigger`` 注入，事件投递逻辑仍归 ins 通道。
+
+_manager_instance: CronTaskManager | None = None
+_manager_lock = threading.Lock()
+
+
+def get_cron_manager() -> CronTaskManager:
+    """获取全局 ``CronTaskManager`` 单例"""
+    global _manager_instance
+    if _manager_instance is None:
+        with _manager_lock:
+            if _manager_instance is None:
+                _manager_instance = CronTaskManager()
+    return _manager_instance

@@ -30,6 +30,8 @@ from agent.tools.bash_tool import BashTool, create_bash_tool
 from agent.tools.sleep_tool import create_sleep_tool
 from agent.tools.glob_tool import GlobTool, create_glob_tool
 from agent.tools.grep_tool import GrepTool, create_grep_tool
+from agent.tools.cron_tool import create_cron_tools
+from channels.device.crontab import get_cron_manager
 from config import get_global_config
 
 __all__ = [
@@ -47,6 +49,7 @@ __all__ = [
     "create_sleep_tool",
     "create_glob_tool",
     "create_grep_tool",
+    "create_cron_tools",
 ]
 
 
@@ -78,5 +81,9 @@ def create_tool_list() -> dict[str, Any]:
                                        config.EMAIL_SMTP_USERNAME, config.EMAIL_SMTP_PASSWORD, config.EMAIL_FROM_NAME))
     if config.ENABLE_BASH_TOOL:
         tools.append(create_bash_tool())
+
+    # Cron 定时任务管理工具（与调度器共享同一个 manager 单例，
+    # 新建/修改/删除的任务会实时同步到正在运行的调度器）
+    tools.extend(create_cron_tools(get_cron_manager()))
 
     return tools

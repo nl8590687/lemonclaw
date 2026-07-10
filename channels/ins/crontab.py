@@ -18,7 +18,7 @@ Crontab Input
 """
 
 from channels.bus import EventPriority, EventType, get_bus
-from channels.device.crontab import CronTaskManager
+from channels.device.crontab import get_cron_manager
 from channels.ins.base import BaseInChannel
 
 
@@ -29,7 +29,9 @@ class CrontabInput(BaseInChannel):
 
     def __init__(self):
         super().__init__()
-        self.manager = CronTaskManager(on_trigger=self._write_message)
+        # 复用全局单例，保证 Agent 工具 / /cron 指令与本调度器操作同一实例
+        self.manager = get_cron_manager()
+        self.manager.set_on_trigger(self._write_message)
 
     def run(self):
         self.manager.start()
