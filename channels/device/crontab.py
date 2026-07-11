@@ -29,12 +29,24 @@ Crontab 定时任务设备
 与 ``channels/ins/webhook.py`` 的写法保持一致。
 """
 
+import logging
 import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 from dao import CronTask, CronTaskDAO
+
+
+# 模块级日志器（自带 handler，避免依赖全局 logging 配置；
+# 调度器跑在后台线程，需要能独立观察到"是否启动 / 是否命中 / 是否投递"）
+_logger = logging.getLogger("lemonclaw.cron")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[cron] %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
+    _logger.propagate = False
 
 
 # 触发回调签名（与 webhook 的 _write_message 保持兼容）：
@@ -219,6 +231,9 @@ class CronScheduler:
             target=self._loop, daemon=True, name="cron-scheduler"
         )
         self._thread.start()
+        _logger.info(
+            f"scheduler thread started, {len(self._tasks)} task(s) in memory"
+        )
 
     def stop(self) -> None:
         if not self._running:
@@ -255,6 +270,10 @@ class CronScheduler:
     def _fire(self, task: CronTask) -> None:
         """命中后调用上层回调，由调用方决定如何投递事件"""
         if self._on_trigger is None:
+            _logger.warning(
+                f"task {task.task_id} ({task.cron_expression}) matched but "
+                f"on_trigger is None -- CrontabInput 未注入回调，事件未投递"
+            )
             return
         try:
             self._on_trigger(
@@ -266,9 +285,12 @@ class CronScheduler:
                     "cron_expression": task.cron_expression,
                 },
             )
-        except Exception:
+            _logger.info(
+                f"fired task {task.task_id} ({task.cron_expression}) -> bus"
+            )
+        except Exception as e:
             # 单个任务投递失败不应拖垮调度器
-            pass
+            _logger.error(f"fire task {task.task_id} failed: {e}")
 
 
 # =====================================================================
@@ -305,7 +327,11 @@ class CronTaskManager:
         return loaded
 
     def start(self) -> None:
-        self.load_tasks()
+        loaded = self.load_tasks()
+        _logger.info(
+            f"manager starting, loaded {loaded} enabled task(s) from db; "
+            f"on_trigger={'set' if self.scheduler._on_trigger else 'None'}"
+        )
         self.scheduler.start()
 
     def stop(self) -> None:
