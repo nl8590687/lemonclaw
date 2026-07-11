@@ -85,6 +85,13 @@ class GlobalConfig(BaseSettings):
     FEISHU_APP_ID: str|None = os.environ.get("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: SecretStr = SecretStr(os.environ.get("FEISHU_APP_SECRET", ""))
 
+    # 持久化记忆
+    ENABLE_MEMORY: bool = str(os.environ.get("ENABLE_MEMORY", "true")).lower() == "true"
+    MEMORY_MAX_CONTEXT_TOKENS: int = int(os.environ.get("MEMORY_MAX_CONTEXT_TOKENS", 1500))
+    MEMORY_RECENT_SESSIONS: int = int(os.environ.get("MEMORY_RECENT_SESSIONS", 3))
+    MEMORY_MAX_SEARCH_CHUNKS: int = int(os.environ.get("MEMORY_MAX_SEARCH_CHUNKS", 100))
+    MEMORY_AUTO_ARCHIVE: bool = str(os.environ.get("MEMORY_AUTO_ARCHIVE", "true")).lower() == "true"
+
 
 def load_config() -> GlobalConfig:
     """

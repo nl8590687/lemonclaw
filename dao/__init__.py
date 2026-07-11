@@ -22,6 +22,11 @@ LemonClaw 数据访问层
 
 from dao.db import get_connection, get_db_path, execute, query_one, query_all
 from dao.cron_task import CronTask, CronTaskDAO, ensure_schema as ensure_cron_schema
+from dao.memory import (
+    MemorySession, MemoryMessage, MemoryChunk, CoreMemory,
+    MemorySessionDAO, MemoryMessageDAO, MemoryChunkDAO, CoreMemoryDAO,
+    ensure_memory_schema,
+)
 
 __all__ = [
     "get_connection",
@@ -32,4 +37,13 @@ __all__ = [
     "CronTask",
     "CronTaskDAO",
     "ensure_cron_schema",
+    "MemorySession",
+    "MemoryMessage",
+    "MemoryChunk",
+    "CoreMemory",
+    "MemorySessionDAO",
+    "MemoryMessageDAO",
+    "MemoryChunkDAO",
+    "CoreMemoryDAO",
+    "ensure_memory_schema",
 ]

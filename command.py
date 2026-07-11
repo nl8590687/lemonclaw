@@ -30,20 +30,23 @@ def _print_help(out_chan: BaseOutChannel):
     table.add_row("/help", "显示本帮助")
     table.add_row("")
     table.add_row("[bold cyan]核心记忆[/]", "")
-    table.add_row("/memory", "查看当前核心记忆")
-    table.add_row("/remember <key> <value>", "记住某事（fact 类型）")
-    table.add_row("/remember <type>:<key> <value>", "记住某事，指定类型")
-    table.add_row("/forget <type>:<key>", "删除某条记忆")
+    table.add_row("/memory", "列出全部核心记忆")
+    table.add_row("/memory set <key> <value>", "记住一条（fact 类型）")
+    table.add_row("/memory set <type>:<key> <value>", "记住一条，指定类型")
+    table.add_row("/memory get <type>:<key>", "查看单条")
+    table.add_row("/memory delete <type>:<key>", "删除单条")
     table.add_row("")
     table.add_row("[bold cyan]历史会话[/]", "")
-    table.add_row("/sessions", "列出最近会话")
-    table.add_row("/load <id>", "查看某会话的历史")
+    table.add_row("/session", "列出最近会话")
+    table.add_row("/session show <id>", "查看某会话的历史消息")
+    table.add_row("/resume [id]", "原地续写指定 id 或最近一次会话")
     table.add_row("")
     table.add_row("[bold cyan]长期记忆块[/]", "")
-    table.add_row("/chunks", "列出所有长期记忆块")
-    table.add_row("/addchunk <type> <title> <content>", "添加记忆块")
-    table.add_row("/delchunk <id>", "删除记忆块")
-    table.add_row("/search <query>", "搜索相关记忆")
+    table.add_row("/chunk", "列出所有长期记忆块")
+    table.add_row("/chunk add <type> <title> <content>", "添加记忆块")
+    table.add_row("/chunk get <id>", "查看单条记忆块")
+    table.add_row("/chunk delete <id>", "删除记忆块")
+    table.add_row("/chunk search <query>", "搜索相关记忆块")
     table.add_row("")
     table.add_row("[bold cyan]Skill 管理[/]", "")
     table.add_row("/skills", "列出所有可用技能")
@@ -69,40 +72,381 @@ def _print_total_tokens(out_chan: BaseOutChannel, agent_service: AgentService):
     pass
 
 
-def _print_memory(out_chan: BaseOutChannel, agent_service: AgentService):
-    pass
+def _parse_type_key(s: str) -> tuple[str, str]:
+    """解析 'type:key' 或 'key'，返回 (memory_type, key)；无 ':' 时 type='fact'"""
+    s = s.strip()
+    if ":" in s:
+        t, k = s.split(":", 1)
+        return t.strip(), k.strip()
+    return "fact", s
 
 
-def _handle_remember(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _memory_list(out_chan: BaseOutChannel, agent_service: AgentService):
+    """列出全部核心记忆"""
+    memories = agent_service.list_core_memory()
+    if not memories:
+        out_chan.write_menu_content("[dim]当前没有核心记忆[/dim]\n")
+        return
+    table = Table(title="核心记忆", show_header=True, header_style="bold cyan")
+    table.add_column("类型", style="bold yellow")
+    table.add_column("键")
+    table.add_column("值")
+    table.add_column("描述", style="dim")
+    for m in memories:
+        table.add_row(m.memory_type, m.key, m.value, m.description or "")
+    out_chan.write_menu_content(table)
 
 
-def _handle_forget(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _memory_set(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """写入/更新核心记忆: /memory set [type:]<key> <value>"""
+    if not rest:
+        out_chan.write_menu_content(
+            "[warning]用法: /memory set [type:]<key> <value>[/warning]\n"
+            "示例: /memory set lang 中文\n"
+            "      /memory set preference:lang 中文\n"
+        )
+        return
+    parts = rest.split(None, 1)
+    key_part = parts[0]
+    value = parts[1].strip() if len(parts) > 1 else ""
+    if not value:
+        out_chan.write_menu_content("[warning]value 不能为空[/warning]\n")
+        return
+    memory_type, key = _parse_type_key(key_part)
+    if not key:
+        out_chan.write_menu_content("[warning]key 不能为空[/warning]\n")
+        return
+    if agent_service.remember(key, value, memory_type=memory_type):
+        out_chan.write_menu_content(
+            f"[success]✅ 已记住[/success] [{memory_type}] {key} = {value}\n"
+        )
+    else:
+        out_chan.write_system_error("写入核心记忆失败")
 
 
-def _print_sessions(out_chan: BaseOutChannel, agent_service: AgentService):
-    pass
+def _memory_get(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """查看单条核心记忆: /memory get <type>:<key>"""
+    if not rest or ":" not in rest:
+        out_chan.write_menu_content("[warning]用法: /memory get <type>:<key>[/warning]\n")
+        return
+    memory_type, key = _parse_type_key(rest)
+    mem = agent_service.get_core_memory(memory_type, key)
+    if mem is None:
+        out_chan.write_menu_content(f"[dim]未找到核心记忆[/dim] [{memory_type}] {key}\n")
+        return
+    out_chan.write_menu_content(Panel(
+        f"[bold]类型:[/] {mem.memory_type}\n"
+        f"[bold]键:[/] {mem.key}\n"
+        f"[bold]值:[/] {mem.value}\n"
+        f"[bold]描述:[/] {mem.description or '-'}\n"
+        f"[bold]用户编辑:[/] {'是' if mem.is_user_edited else '否'}\n"
+        f"[bold]创建:[/] {mem.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+        f"[bold]更新:[/] {mem.updated_at.strftime('%Y-%m-%d %H:%M')}",
+        title=f"核心记忆: {memory_type}:{key}",
+        border_style="cyan",
+    ))
 
 
-def _handle_load_session(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _memory_delete(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """删除核心记忆: /memory delete <type>:<key>"""
+    if not rest or ":" not in rest:
+        out_chan.write_menu_content("[warning]用法: /memory delete <type>:<key>[/warning]\n")
+        return
+    memory_type, key = _parse_type_key(rest)
+    if agent_service.forget(memory_type, key):
+        out_chan.write_menu_content(
+            f"[success]✅ 已删除[/success] [{memory_type}] {key}\n"
+        )
+    else:
+        out_chan.write_system_error(f"删除失败，可能不存在: [{memory_type}] {key}")
 
 
-def _print_chunks(out_chan: BaseOutChannel, agent_service: AgentService):
-    pass
+def _memory_help(out_chan: BaseOutChannel):
+    table = Table(title="/memory 命令", show_header=True, header_style="bold cyan")
+    table.add_column("命令", style="bold")
+    table.add_column("说明")
+    table.add_row("/memory, /memory list", "列出全部核心记忆")
+    table.add_row("/memory set <key> <value>", "记住一条（fact 类型）")
+    table.add_row("/memory set <type>:<key> <value>", "记住一条，指定类型")
+    table.add_row("/memory get <type>:<key>", "查看单条")
+    table.add_row("/memory delete <type>:<key>", "删除单条")
+    table.add_row("/memory help", "显示本帮助")
+    out_chan.write_menu_content(table)
 
 
-def _handle_add_chunk(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _handle_memory(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    """处理 /memory 命令（核心记忆：set/get/delete/list/help）"""
+    parts = command.strip().split(None, 2)
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+    rest = parts[2].strip() if len(parts) > 2 else ""
+
+    if agent_service.memory is None:
+        out_chan.write_menu_content("[warning]记忆功能未启用（ENABLE_MEMORY=false）[/warning]\n")
+        return
+
+    if subcmd in ("list", "ls", "l"):
+        _memory_list(out_chan, agent_service)
+    elif subcmd in ("set", "add", "remember"):
+        _memory_set(out_chan, agent_service, rest)
+    elif subcmd in ("get", "show"):
+        _memory_get(out_chan, agent_service, rest)
+    elif subcmd in ("delete", "del", "rm", "forget"):
+        _memory_delete(out_chan, agent_service, rest)
+    elif subcmd in ("help", "h", "?"):
+        _memory_help(out_chan)
+    else:
+        _memory_help(out_chan)
 
 
-def _handle_del_chunk(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _session_list(out_chan: BaseOutChannel, agent_service: AgentService):
+    """列出最近会话"""
+    sessions = agent_service.list_sessions()
+    if not sessions:
+        out_chan.write_menu_content("[dim]没有任何会话记录[/dim]\n")
+        return
+    table = Table(title="历史会话", show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="bold yellow")
+    table.add_column("开始时间")
+    table.add_column("结束时间", style="dim")
+    table.add_column("归档")
+    table.add_column("摘要预览")
+    for s in sessions:
+        start = s.start_time.strftime("%Y-%m-%d %H:%M") if s.start_time else "-"
+        end = s.end_time.strftime("%Y-%m-%d %H:%M") if s.end_time else "-"
+        archived = "是" if s.is_archived else "否"
+        if s.summary and len(s.summary) > 30:
+            summary = s.summary[:30] + "..."
+        else:
+            summary = s.summary or "-"
+        table.add_row(str(s.id), start, end, archived, summary)
+    out_chan.write_menu_content(table)
 
 
-def _handle_search(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
-    pass
+def _session_show(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """查看某会话历史消息: /session show <id>"""
+    if not rest:
+        out_chan.write_menu_content("[warning]用法: /session show <id>[/warning]\n")
+        return
+    try:
+        sid = int(rest.split()[0])
+    except ValueError:
+        out_chan.write_menu_content("[warning]id 必须是整数[/warning]\n")
+        return
+    msgs = agent_service.load_session_messages(sid)
+    if msgs is None:
+        out_chan.write_menu_content(f"[dim]会话不存在[/dim] #{sid}\n")
+        return
+    if not msgs:
+        out_chan.write_menu_content(f"[dim]会话 #{sid} 没有消息[/dim]\n")
+        return
+    role_label = {"human": "用户", "ai": "AI", "tool": "工具", "system": "系统"}
+    lines = [f"= 会话 #{sid} 历史（{len(msgs)} 条）="]
+    for m in msgs:
+        ts = m.timestamp.strftime("%H:%M:%S") if m.timestamp else ""
+        content = f"[{m.tool_name}] {m.content}" if m.tool_name else m.content
+        lines.append(f"[{ts}] {role_label.get(m.role, m.role)}: {content}")
+    out_chan.write_menu_content("\n".join(lines) + "\n")
+
+
+def _session_help(out_chan: BaseOutChannel):
+    table = Table(title="/session 命令", show_header=True, header_style="bold cyan")
+    table.add_column("命令", style="bold")
+    table.add_column("说明")
+    table.add_row("/session, /session list", "列出最近会话")
+    table.add_row("/session show <id>", "查看某会话的历史消息")
+    table.add_row("/session help", "显示本帮助")
+    out_chan.write_menu_content(table)
+
+
+def _handle_session(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    """处理 /session 命令（list/show/help）"""
+    parts = command.strip().split(None, 2)
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+    rest = parts[2].strip() if len(parts) > 2 else ""
+
+    if agent_service.memory is None:
+        out_chan.write_menu_content("[warning]记忆功能未启用（ENABLE_MEMORY=false）[/warning]\n")
+        return
+
+    if subcmd in ("list", "ls", "l"):
+        _session_list(out_chan, agent_service)
+    elif subcmd in ("show", "get", "view"):
+        _session_show(out_chan, agent_service, rest)
+    elif subcmd in ("help", "h", "?"):
+        _session_help(out_chan)
+    else:
+        _session_help(out_chan)
+
+
+def _handle_resume(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    """处理 /resume 命令：原地续写指定 id 或最近一次会话"""
+    if agent_service.memory is None:
+        out_chan.write_menu_content("[warning]记忆功能未启用（ENABLE_MEMORY=false）[/warning]\n")
+        return
+    parts = command.strip().split(None, 1)
+    sid: int | None = None
+    if len(parts) > 1 and parts[1].strip():
+        try:
+            sid = int(parts[1].strip())
+        except ValueError:
+            out_chan.write_menu_content(
+                "[warning]用法: /resume [id]（id 为整数，省略则恢复最近一次）[/warning]\n"
+            )
+            return
+    # 无 id 时先确认存在可恢复会话
+    if sid is None and agent_service.memory.recent_session_id() is None:
+        out_chan.write_menu_content("[dim]没有可恢复的已结束会话[/dim]\n")
+        return
+    if agent_service.resume_session(sid):
+        out_chan.write_menu_content(
+            f"[success]✅ 已续写会话[/success] #{agent_service.memory.current_session_id}\n"
+        )
+    else:
+        target = sid if sid is not None else "最近一次"
+        out_chan.write_menu_content(f"[dim]恢复失败，可能会话不存在: {target}[/dim]\n")
+
+
+def _chunk_list(out_chan: BaseOutChannel, agent_service: AgentService):
+    """列出长期记忆块"""
+    chunks = agent_service.list_chunks()
+    if not chunks:
+        out_chan.write_menu_content("[dim]当前没有长期记忆块[/dim]\n")
+        return
+    table = Table(title="长期记忆块", show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="bold yellow")
+    table.add_column("类型")
+    table.add_column("标题")
+    table.add_column("重要性")
+    table.add_column("访问")
+    table.add_column("内容预览", style="dim")
+    for c in chunks:
+        preview = c.content[:40] + ("..." if len(c.content) > 40 else "")
+        table.add_row(str(c.id), c.chunk_type, c.title, str(c.importance),
+                      str(c.access_count), preview)
+    out_chan.write_menu_content(table)
+
+
+def _chunk_add(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """添加长期记忆块: /chunk add <type> <title> <content>"""
+    if not rest:
+        out_chan.write_menu_content(
+            "[warning]用法: /chunk add <type> <title> <content>[/warning]\n"
+            "示例: /chunk add fact 数据库 使用 sqlite 单库\n"
+        )
+        return
+    parts = rest.split(None, 2)
+    if len(parts) < 3:
+        out_chan.write_menu_content("[warning]type / title / content 均不能为空[/warning]\n")
+        return
+    chunk_type, title, content = parts[0], parts[1], parts[2].strip()
+    cid = agent_service.add_chunk(chunk_type, title, content)
+    if cid is not None:
+        out_chan.write_menu_content(
+            f"[success]✅ 已添加记忆块[/success] #{cid} [{chunk_type}] {title}\n"
+        )
+    else:
+        out_chan.write_system_error("添加记忆块失败")
+
+
+def _chunk_get(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """查看单条记忆块: /chunk get <id>"""
+    if not rest:
+        out_chan.write_menu_content("[warning]用法: /chunk get <id>[/warning]\n")
+        return
+    try:
+        cid = int(rest.split()[0])
+    except ValueError:
+        out_chan.write_menu_content("[warning]id 必须是整数[/warning]\n")
+        return
+    c = agent_service.get_chunk(cid)
+    if c is None:
+        out_chan.write_menu_content(f"[dim]记忆块不存在[/dim] #{cid}\n")
+        return
+    out_chan.write_menu_content(Panel(
+        f"[bold]ID:[/] {c.id}\n"
+        f"[bold]类型:[/] {c.chunk_type}\n"
+        f"[bold]标题:[/] {c.title}\n"
+        f"[bold]重要性:[/] {c.importance}\n"
+        f"[bold]关键词:[/] {', '.join(c.keywords) if c.keywords else '-'}\n"
+        f"[bold]访问次数:[/] {c.access_count}\n"
+        f"[bold]来源会话:[/] {c.source_session_id or '-'}\n"
+        f"[bold]创建:[/] {c.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+        f"\n[bold]内容:[/]\n{c.content}",
+        title=f"记忆块: {c.title}",
+        border_style="cyan",
+    ))
+
+
+def _chunk_delete(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """删除记忆块: /chunk delete <id>"""
+    if not rest:
+        out_chan.write_menu_content("[warning]用法: /chunk delete <id>[/warning]\n")
+        return
+    try:
+        cid = int(rest.split()[0])
+    except ValueError:
+        out_chan.write_menu_content("[warning]id 必须是整数[/warning]\n")
+        return
+    if agent_service.delete_chunk(cid):
+        out_chan.write_menu_content(f"[success]✅ 已删除记忆块[/success] #{cid}\n")
+    else:
+        out_chan.write_system_error(f"删除失败，可能不存在: #{cid}")
+
+
+def _chunk_search(out_chan: BaseOutChannel, agent_service: AgentService, rest: str):
+    """搜索记忆块: /chunk search <query>"""
+    if not rest:
+        out_chan.write_menu_content("[warning]用法: /chunk search <query>[/warning]\n")
+        return
+    results = agent_service.search_memory(rest)
+    if not results:
+        out_chan.write_menu_content(f"[dim]未找到相关记忆块[/dim]\n")
+        return
+    lines = [f"= 搜索「{rest}」命中 {len(results)} 条 ="]
+    for c, score in results:
+        lines.append(f"  #{c.id} [{c.chunk_type}] (重要性{c.importance}, 相关度{score:.2f}) {c.title}")
+        preview = c.content[:80] + ("..." if len(c.content) > 80 else "")
+        lines.append(f"    {preview}")
+    out_chan.write_menu_content("\n".join(lines) + "\n")
+
+
+def _chunk_help(out_chan: BaseOutChannel):
+    table = Table(title="/chunk 命令", show_header=True, header_style="bold cyan")
+    table.add_column("命令", style="bold")
+    table.add_column("说明")
+    table.add_row("/chunk, /chunk list", "列出所有长期记忆块")
+    table.add_row("/chunk add <type> <title> <content>", "添加记忆块")
+    table.add_row("/chunk get <id>", "查看单条")
+    table.add_row("/chunk delete <id>", "删除记忆块")
+    table.add_row("/chunk search <query>", "搜索相关记忆块")
+    table.add_row("/chunk help", "显示本帮助")
+    out_chan.write_menu_content(table)
+
+
+def _handle_chunk(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    """处理 /chunk 命令（list/add/get/delete/search/help）"""
+    parts = command.strip().split(None, 2)
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+    rest = parts[2].strip() if len(parts) > 2 else ""
+
+    if agent_service.memory is None:
+        out_chan.write_menu_content("[warning]记忆功能未启用（ENABLE_MEMORY=false）[/warning]\n")
+        return
+
+    if subcmd in ("list", "ls", "l"):
+        _chunk_list(out_chan, agent_service)
+    elif subcmd in ("add", "new", "create"):
+        _chunk_add(out_chan, agent_service, rest)
+    elif subcmd in ("get", "show"):
+        _chunk_get(out_chan, agent_service, rest)
+    elif subcmd in ("delete", "del", "rm"):
+        _chunk_delete(out_chan, agent_service, rest)
+    elif subcmd in ("search", "find", "s"):
+        _chunk_search(out_chan, agent_service, rest)
+    elif subcmd in ("help", "h", "?"):
+        _chunk_help(out_chan)
+    else:
+        _chunk_help(out_chan)
 
 
 def _print_skills(out_chan: BaseOutChannel, agent_service: AgentService):
@@ -304,42 +648,23 @@ def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, comman
         _print_total_tokens(out_chan, agent_service)
         return True
 
-    # 记忆系统命令
-    if cmd == "/memory":
-        _print_memory(out_chan, agent_service)
+    # 核心记忆命令
+    if cmd == "/memory" or cmd.startswith("/memory "):
+        _handle_memory(out_chan, agent_service, command)
         return True
 
-    if cmd.startswith("/remember "):
-        _handle_remember(out_chan, agent_service, command)
+    # 历史会话命令
+    if cmd == "/session" or cmd.startswith("/session "):
+        _handle_session(out_chan, agent_service, command)
         return True
 
-    if cmd.startswith("/forget "):
-        _handle_forget(out_chan, agent_service, command)
-        return True
-
-    if cmd == "/sessions":
-        _print_sessions(out_chan, agent_service)
-        return True
-
-    if cmd.startswith("/load "):
-        _handle_load_session(out_chan, agent_service, command)
+    if cmd == "/resume" or cmd.startswith("/resume "):
+        _handle_resume(out_chan, agent_service, command)
         return True
 
     # 长期记忆块命令
-    if cmd == "/chunks":
-        _print_chunks(out_chan, agent_service)
-        return True
-
-    if cmd.startswith("/addchunk "):
-        _handle_add_chunk(out_chan, agent_service, command)
-        return True
-
-    if cmd.startswith("/delchunk "):
-        _handle_del_chunk(out_chan, agent_service, command)
-        return True
-
-    if cmd.startswith("/search "):
-        _handle_search(out_chan, agent_service, command)
+    if cmd == "/chunk" or cmd.startswith("/chunk "):
+        _handle_chunk(out_chan, agent_service, command)
         return True
 
     # ============ Skill 命令 ============

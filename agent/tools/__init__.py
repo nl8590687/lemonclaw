@@ -31,8 +31,10 @@ from agent.tools.sleep_tool import create_sleep_tool
 from agent.tools.glob_tool import GlobTool, create_glob_tool
 from agent.tools.grep_tool import GrepTool, create_grep_tool
 from agent.tools.cron_tool import create_cron_tools
+from agent.tools.memory_tool import create_memory_tools
 from channels.device.crontab import get_cron_manager
 from config import get_global_config
+from agent.memory import get_memory_manager
 
 __all__ = [
     "create_bocha_tool",
@@ -50,6 +52,7 @@ __all__ = [
     "create_glob_tool",
     "create_grep_tool",
     "create_cron_tools",
+    "create_memory_tools",
 ]
 
 
@@ -85,5 +88,9 @@ def create_tool_list() -> dict[str, Any]:
     # Cron 定时任务管理工具（与调度器共享同一个 manager 单例，
     # 新建/修改/删除的任务会实时同步到正在运行的调度器）
     tools.extend(create_cron_tools(get_cron_manager()))
+
+    # 持久化记忆读写工具（与 AgentService 共享同一个 MemoryManager 单例）
+    if config.ENABLE_MEMORY:
+        tools.extend(create_memory_tools(get_memory_manager()))
 
     return tools

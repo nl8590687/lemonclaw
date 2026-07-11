@@ -110,4 +110,10 @@ def loop_forever():
             svr.default_out_chan.write_system_error(f"error: {ex}")
 
     stop_event_source()
+    # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）
+    if svr.memory:
+        try:
+            svr.memory.on_session_end(svr._current_messages(), fast=True)
+        except Exception:
+            pass
     svr.default_out_chan.print("\n\n[warning]再见！[/warning]\n")
