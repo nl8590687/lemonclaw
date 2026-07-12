@@ -32,9 +32,11 @@ from agent.tools.glob_tool import GlobTool, create_glob_tool
 from agent.tools.grep_tool import GrepTool, create_grep_tool
 from agent.tools.cron_tool import create_cron_tools
 from agent.tools.memory_tool import create_memory_tools
+from agent.tools.skill_tool import create_skill_tools
 from channels.device.crontab import get_cron_manager
 from config import get_global_config
 from agent.memory import get_memory_manager
+from agent.skill import get_skill_manager
 
 __all__ = [
     "create_bocha_tool",
@@ -53,6 +55,7 @@ __all__ = [
     "create_grep_tool",
     "create_cron_tools",
     "create_memory_tools",
+    "create_skill_tools",
 ]
 
 
@@ -92,5 +95,10 @@ def create_tool_list() -> dict[str, Any]:
     # 持久化记忆读写工具（与 AgentService 共享同一个 MemoryManager 单例）
     if config.ENABLE_MEMORY:
         tools.extend(create_memory_tools(get_memory_manager()))
+
+    # 技能系统工具（与 AgentService 共享同一个 SkillManager 单例）
+    if config.ENABLE_SKILLS:
+        tools.extend(create_skill_tools(get_skill_manager(),
+                                        enable_script=config.ENABLE_SKILL_SCRIPT))
 
     return tools

@@ -27,6 +27,7 @@ from dao.memory import (
     MemorySessionDAO, MemoryMessageDAO, MemoryChunkDAO, CoreMemoryDAO,
     ensure_memory_schema,
 )
+from dao.skill import Skill, SkillDAO, ensure_schema as ensure_skill_schema
 
 __all__ = [
     "get_connection",
@@ -46,4 +47,7 @@ __all__ = [
     "MemoryChunkDAO",
     "CoreMemoryDAO",
     "ensure_memory_schema",
+    "Skill",
+    "SkillDAO",
+    "ensure_skill_schema",
 ]

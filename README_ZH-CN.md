@@ -18,6 +18,7 @@ LemonClaw 是一个开源的通用 AI Agent 框架，能把任意大模型变成
 - 🎧 **多通道接入** —— 终端、Webhook、飞书/Lark、定时任务（Cron），统一消息总线驱动。
 - 🛠️ **16+ 内置工具** —— 文件编辑、grep/glob、git、网页抓取、联网搜索、邮件、HTTP、Shell、定时任务、记忆等。
 - 🧠 **持久化记忆** —— 基于 TF-IDF 的长期记忆块检索 + 会话自动归档，让上下文跨会话保留。
+- 🧩 **技能系统** -- 按需加载的技能包（`SKILL.md`），支持热加载、LRU 活跃集注入、敏感参数门禁与可选脚本执行。
 - 🔌 **OpenAI 兼容** —— 支持任意 OpenAI 兼容接口（DeepSeek、OpenAI、本地服务……）。
 - ⏰ **内置调度** —— 运行时创建与管理定时任务，Agent 可自行安排后续动作。
 - 🐳 **一键 Docker 部署** —— 镜像支持时区配置，挂载配置目录即可运行。
@@ -43,6 +44,7 @@ flowchart LR
     Agent --> LLM[LLM<br/>OpenAI 兼容]
     Agent --> Tools[工具<br/>16+ 内置]
     Agent --> Mem[记忆<br/>TF-IDF + 归档]
+    Agent --> Skills[技能<br/>load/unload + 注入]
     Agent --> Out[输出通道]
     Cmd --> Out
     Out --> Resp[终端 / 飞书]
@@ -55,7 +57,7 @@ flowchart LR
 |--- .env         环境变量配置文件
 |--- .env.example 环境变量配置样例文件
 |--- lemonclaw.db 全局 SQLite3 数据库（整个项目仅此一个库）
-|- agent/         Agent 实现模块（循环、工具、LLM、记忆）
+|- agent/         Agent 实现模块（循环、工具、LLM、记忆、技能）
 |- channels/      输入输出设备和通道、消息总线
 |- dao/           数据库 model 和 dao 操作模块
 |- config/        配置相关代码模块
@@ -132,6 +134,7 @@ docker run -e TZ=Asia/Shanghai \
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook 服务：主机/端口、鉴权 Token、频率限制 |
 | `ENABLE_FEISHU` / `FEISHU_*` | 飞书/Lark 应用凭证 |
 | `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
+| `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
 
 ---
 
@@ -165,6 +168,8 @@ LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出�
 | `email` | 通过 SMTP 发送邮件 | 可选（需 `EMAIL_*`） |
 | `bash` | 执行 Shell 命令 | 可选（需 `ENABLE_BASH_TOOL=true`） |
 | `memory` | 读写持久化记忆 | 可选（需 `ENABLE_MEMORY=true`） |
+| `load_skill` / `unload_skill` | 激活 / 卸载技能（指令由中间件注入） | 可选（需 `ENABLE_SKILLS=true`） |
+| `run_skill_script` | 在技能隔离环境执行 Python/Node 脚本 | 可选（需 `ENABLE_SKILL_SCRIPT=true`） |
 
 > 可扩展：在 `agent/tools/` 下新增工具，并在 `create_tool_list()` 中注册即可。
 
@@ -178,7 +183,57 @@ LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出�
 - **会话归档** —— 会话结束时自动摘要归档，便于后续召回。
 - **上下文注入** —— 在 Token 预算（`MEMORY_MAX_CONTEXT_TOKENS`）内将相关记忆注入 Agent 上下文，优先级：核心记忆 → 最近会话 → 检索块。
 
-完整设计见 [`.doc/持久化记忆读写-Spec.md`](.doc/持久化记忆读写-Spec.md)，也可通过 `/memory`、`/chunk`、`/session` 命令在运行时管理记忆。
+可通过 `/memory`、`/chunk`、`/session` 命令在运行时管理记忆。
+
+---
+
+## 🧩 技能系统
+
+当 `ENABLE_SKILLS=true`（默认）时，LemonClaw 把可复用的工作流封装为按需加载的**技能包**。把技能目录放入 `.lemonclaw/skills/`，Agent 即可在运行时发现并加载。
+
+### 技能包格式（OpenClaw 兼容）
+
+```
+.lemonclaw/skills/<name>-<version>/
+├── SKILL.md         # 必需 - YAML frontmatter（name/description/tags）+ markdown 指令
+├── _meta.json       # 可选 - slug/version 元数据
+├── requirements.txt # 可选 - Python 依赖（启用该技能的 run_skill_script）
+├── package.json     # 可选 - Node 依赖
+└── *.md             # 可选 - 附带参考文档（追加到加载内容后）
+```
+
+`SKILL.md` frontmatter 样例：
+
+```yaml
+---
+name: weekly-report
+description: 生成每周工作总结
+tags: [report, work]
+metadata:
+  openclaw:
+    emoji: 📊
+    requires:
+      env:
+        - BOCHA_API_KEY   # 声明所需环境变量
+    primaryEnv: BOCHA_API_KEY
+---
+```
+
+### 工作机制
+
+- **发现** - 启动时与 `/skills reload` 时扫描技能目录，元数据索引到 SQLite 库。
+- **路由** - 每轮将所有*可用*技能的摘要（name + description + tags）注入系统提示，供 LLM 选择。
+- **激活** - Agent 调用 `load_skill(name)` 激活技能；其完整指令随后由上下文中间件每轮注入（不进消息历史，不会被上下文压缩丢失）。
+- **LRU + 卸载** - 最多 `MAX_ACTIVE_SKILLS`（默认 5）个技能同时活跃（LRU 淘汰）；用完后 Agent 调 `unload_skill(name)` 卸载。
+- **热加载** - 新增/修改/删除技能包后执行 `/skills reload`，立即生效，无需重启。
+
+### 敏感参数（API Key 等）
+
+技能在 frontmatter 声明所需环境变量。在 `.lemonclaw/.env` 中**配置一次**即永久生效；`/skills reload` 拾取新增密钥。缺配置的技能标 `⚠ 缺配置` 且不向 Agent 暴露。密钥绝不进入 LLM 上下文--技能正文用 `${VAR}` 占位符，由 `http_request` 在服务端替换。
+
+### 脚本技能（Python / Node）
+
+若技能含 `requirements.txt` / `package.json`，用 `/skills setup <name>` 一次性安装依赖（隔离 venv / `node_modules`，默认国内镜像）。通过 `run_skill_script` 工具执行脚本（受 `ENABLE_SKILL_SCRIPT` 控制，默认关闭；路径围栏、无 shell、跨平台）。Node 技能需在镜像中预装 `node`/`npm`。
 
 ---
 
@@ -196,7 +251,7 @@ LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出�
 | `/chunk` | 管理长期记忆块（list/add/get/delete/search） |
 | `/memory` | 管理核心记忆（set/get/delete/list） |
 | `/cron` | 列出并管理定时任务（`/cron help` 查看子命令） |
-| `/skills` / `/skills refresh` | 列出可用技能 / 刷新技能索引 |
+| `/skills` | 列出并管理技能（`/skills help` 查看子命令：list/show/enable/disable/unload/setup/reload） |
 | `/exit` `/quit` `/q` | 退出 |
 
 ---

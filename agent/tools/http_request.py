@@ -60,6 +60,13 @@ def http_request(method: str = "GET", url: str = "", headers: dict[str, object]|
     if "User-Agent" not in headers:
         headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+    # 解析 ${VAR} 环境变量占位符（技能密钥服务端替换，密钥不进 LLM 上下文）
+    from agent.skill.manager import resolve_env_refs
+    url = resolve_env_refs(url)
+    headers = {k: (resolve_env_refs(v) if isinstance(v, str) else v) for k, v in headers.items()}
+    if body:
+        body = resolve_env_refs(body)
+
     try:
         with httpx.Client(timeout=60, follow_redirects=True) as client:
             request_args = {

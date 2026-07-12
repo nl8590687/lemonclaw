@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from rich.table import Table
 from rich.panel import Panel
 
@@ -49,8 +51,12 @@ def _print_help(out_chan: BaseOutChannel):
     table.add_row("/chunk search <query>", "搜索相关记忆块")
     table.add_row("")
     table.add_row("[bold cyan]Skill 管理[/]", "")
-    table.add_row("/skills", "列出所有可用技能")
-    table.add_row("/skills refresh", "刷新技能索引（新增/修改后）")
+    table.add_row("/skills", "列出所有技能（/skills help 查看子命令）")
+    table.add_row("/skills show <名称>", "查看技能详情")
+    table.add_row("/skills enable/disable <名称>", "启用/禁用技能")
+    table.add_row("/skills unload <名称>", "卸载已激活技能")
+    table.add_row("/skills setup <名称>", "安装技能依赖")
+    table.add_row("/skills reload", "热加载（重扫目录刷新索引）")
     table.add_row("")
     table.add_row("[bold cyan]定时任务[/]", "")
     table.add_row("/cron", "列出所有定时任务（/cron help 查看子命令）")
@@ -449,12 +455,162 @@ def _handle_chunk(out_chan: BaseOutChannel, agent_service: AgentService, command
         _chunk_help(out_chan)
 
 
-def _print_skills(out_chan: BaseOutChannel, agent_service: AgentService):
-    pass
+def _skills_list(out_chan: BaseOutChannel, agent_service: AgentService):
+    """列出所有技能"""
+    if not agent_service.is_skills_enabled():
+        out_chan.write_menu_content("[dim]技能功能未启用[/dim]\n")
+        return
+    skills = agent_service.list_skills()
+    if not skills:
+        out_chan.write_menu_content("[dim]当前没有技能包（放入 .lemonclaw/skills/<name>-<version>/ 后执行 /skills reload）[/dim]\n")
+        return
+    from agent.skill import get_skill_manager
+    active_mgr = get_skill_manager()
+    table = Table(title="Skills 技能列表", show_header=True, header_style="bold cyan")
+    table.add_column("名称", style="bold yellow")
+    table.add_column("版本", style="dim")
+    table.add_column("状态")
+    table.add_column("配置")
+    table.add_column("描述")
+    for s in skills:
+        active = " ●" if active_mgr.is_active(s.name) else ""
+        status = ("启用" if s.enabled else "禁用") + active
+        if s.required_envs:
+            missing = [e for e in s.required_envs if not os.environ.get(e)]
+            cfg = "✓" if not missing else f"⚠ 缺{len(missing)}"
+        else:
+            cfg = "—"
+        table.add_row(s.name, s.version, status, cfg, s.description)
+    out_chan.write_menu_content(table)
 
 
-def _refresh_skills(out_chan: BaseOutChannel, agent_service: AgentService):
-    pass
+def _skills_show(out_chan: BaseOutChannel, agent_service: AgentService, name: str | None):
+    """查看技能详情"""
+    if not agent_service.is_skills_enabled():
+        out_chan.write_menu_content("[dim]技能功能未启用[/dim]\n")
+        return
+    if not name:
+        out_chan.write_menu_content("[warning]用法: /skills show <技能名>[/warning]\n")
+        return
+    skill = agent_service.get_skill(name)
+    if not skill:
+        out_chan.write_system_error(f"技能不存在: {name}")
+        return
+    # 所需环境变量配置状态（不显示值）
+    if skill.required_envs:
+        env_lines = [f"  {'✓' if os.environ.get(e) else '✗'} {e}" for e in skill.required_envs]
+    else:
+        env_lines = ["  （无）"]
+    env_block = "\n".join(env_lines)
+    # 内容预览
+    from agent.skill import get_skill_manager
+    content = get_skill_manager().registry.get_full_content(name) or ""
+    preview = content[:500] + ("..." if len(content) > 500 else "")
+    out_chan.write_menu_content(Panel(
+        f"[bold]名称:[/] {skill.name}\n"
+        f"[bold]版本:[/] {skill.version}\n"
+        f"[bold]状态:[/] {'启用' if skill.enabled else '禁用'}\n"
+        f"[bold]目录:[/] {skill.dir_path}\n"
+        f"[bold]所需环境变量:[/]\n{env_block}\n"
+        f"[bold]加载次数:[/] {skill.access_count}\n"
+        f"\n[bold]内容预览:[/]\n{preview}",
+        title=f"Skill: {name}",
+        border_style="cyan",
+    ))
+
+
+def _skills_enable(out_chan: BaseOutChannel, agent_service: AgentService, name: str | None):
+    if not name:
+        out_chan.write_menu_content("[warning]用法: /skills enable <技能名>[/warning]\n")
+        return
+    if agent_service.enable_skill(name):
+        out_chan.write_menu_content(f"[success]已启用技能: {name}[/success]\n")
+    else:
+        out_chan.write_system_error(f"启用失败，技能不存在: {name}")
+
+
+def _skills_disable(out_chan: BaseOutChannel, agent_service: AgentService, name: str | None):
+    if not name:
+        out_chan.write_menu_content("[warning]用法: /skills disable <技能名>[/warning]\n")
+        return
+    if agent_service.disable_skill(name):
+        out_chan.write_menu_content(f"[success]已禁用技能: {name}[/success]\n")
+    else:
+        out_chan.write_system_error(f"禁用失败，技能不存在: {name}")
+
+
+def _skills_unload(out_chan: BaseOutChannel, agent_service: AgentService, name: str | None):
+    if not name:
+        out_chan.write_menu_content("[warning]用法: /skills unload <技能名>[/warning]\n")
+        return
+    out_chan.write_menu_content(f"{agent_service.unload_skill(name)}\n")
+
+
+def _skills_setup(out_chan: BaseOutChannel, agent_service: AgentService, name: str | None):
+    """安装技能依赖（Python venv / Node）"""
+    if not name:
+        out_chan.write_menu_content("[warning]用法: /skills setup <技能名>[/warning]\n")
+        return
+    out_chan.write_menu_content(f"正在安装 {name} 依赖...\n")
+    ok, msg = agent_service.setup_skill_deps(name)
+    if ok:
+        out_chan.write_menu_content(f"[success]✅ {name}: {msg}[/success]\n")
+    else:
+        out_chan.write_system_error(f"❌ {name} 依赖安装失败: {msg}")
+
+
+def _skills_reload(out_chan: BaseOutChannel, agent_service: AgentService):
+    """热加载：重扫目录、刷新索引与上下文"""
+    if not agent_service.is_skills_enabled():
+        out_chan.write_menu_content("[dim]技能功能未启用[/dim]\n")
+        return
+    agent_service.reload_skills()
+    count = len(agent_service.list_skills())
+    out_chan.write_menu_content(f"[success]已热加载 {count} 个技能（活跃技能内容已刷新）[/success]\n")
+
+
+def _skills_help(out_chan: BaseOutChannel):
+    table = Table(title="Skills 命令", show_header=True, header_style="bold cyan")
+    table.add_column("命令", style="bold")
+    table.add_column("说明")
+    table.add_row("/skills", "列出所有技能")
+    table.add_row("/skills list", "列出所有技能")
+    table.add_row("/skills show <名称>", "查看技能详情（含所需环境变量配置状态）")
+    table.add_row("/skills enable <名称>", "启用技能")
+    table.add_row("/skills disable <名称>", "禁用技能")
+    table.add_row("/skills unload <名称>", "卸载已激活技能（停止注入其全文）")
+    table.add_row("/skills setup <名称>", "安装技能依赖（Python venv / Node）")
+    table.add_row("/skills reload", "热加载（重扫目录，刷新索引与上下文）")
+    table.add_row("/skills help", "显示本帮助")
+    out_chan.write_menu_content(table)
+
+
+def _handle_skills(out_chan: BaseOutChannel, agent_service: AgentService, command: str) -> bool:
+    """处理 /skills 命令，返回是否继续对话"""
+    parts = command.strip().split()
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+    name = parts[2] if len(parts) > 2 else None
+
+    if subcmd in ("list", "ls", "l"):
+        _skills_list(out_chan, agent_service)
+    elif subcmd in ("show", "get", "view"):
+        _skills_show(out_chan, agent_service, name)
+    elif subcmd in ("enable", "en"):
+        _skills_enable(out_chan, agent_service, name)
+    elif subcmd in ("disable", "dis"):
+        _skills_disable(out_chan, agent_service, name)
+    elif subcmd in ("unload", "ul"):
+        _skills_unload(out_chan, agent_service, name)
+    elif subcmd in ("setup", "install"):
+        _skills_setup(out_chan, agent_service, name)
+    elif subcmd in ("reload", "rl"):
+        _skills_reload(out_chan, agent_service)
+    elif subcmd in ("help", "h", "?"):
+        _skills_help(out_chan)
+    else:
+        _skills_help(out_chan)
+
+    return True
 
 
 # ============ Cron 定时任务命令 ============
@@ -667,14 +823,9 @@ def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, comman
         _handle_chunk(out_chan, agent_service, command)
         return True
 
-    # ============ Skill 命令 ============
-    if cmd == "/skills":
-        _print_skills(out_chan, agent_service)
-        return True
-
-    if cmd == "/skills refresh":
-        _refresh_skills(out_chan, agent_service)
-        return True
+    # ============ Skill 技能命令 ============
+    if cmd == "/skills" or cmd.startswith("/skills "):
+        return _handle_skills(out_chan, agent_service, command)
 
     # ============ Cron 定时任务命令 ============
     if cmd == "/cron" or cmd.startswith("/cron "):

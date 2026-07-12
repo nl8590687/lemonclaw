@@ -18,6 +18,7 @@ LemonClaw is an open-source, general-purpose AI agent framework that turns any L
 - 🎧 **Multi-channel access** — Terminal, Webhook, Feishu/Lark, and Cron (scheduled tasks), all running on a unified message bus.
 - 🛠️ **16+ built-in tools** — file editing, grep/glob, git, web fetch, web search, email, HTTP, shell, cron, memory, and more.
 - 🧠 **Persistent memory** — TF-IDF retrieval over long-term memory chunks plus automatic session archival, so context survives across sessions.
+- 🧩 **Skills** — on-demand skill packages (`SKILL.md`) with hot-reload, LRU active-set injection, sensitive-param gating, and optional script execution.
 - 🔌 **OpenAI-compatible** — works with any OpenAI-compatible API (DeepSeek, OpenAI, local servers, …).
 - ⏰ **Built-in scheduling** — create and manage cron tasks at runtime; the agent can schedule its own follow-ups.
 - 🐳 **One-command Docker deploy** — timezone-aware image, just mount the config dir.
@@ -43,6 +44,7 @@ flowchart LR
     Agent --> LLM[LLM<br/>OpenAI-compatible]
     Agent --> Tools[Tools<br/>16+ built-in]
     Agent --> Mem[Memory<br/>TF-IDF + Archive]
+    Agent --> Skills[Skills<br/>load/unload + inject]
     Agent --> Out[Output Channel]
     Cmd --> Out
     Out --> Resp[Terminal / Feishu]
@@ -55,7 +57,7 @@ flowchart LR
 |--- .env         Environment variables
 |--- .env.example Example env file
 |--- lemonclaw.db Global SQLite3 database (single DB for the whole project)
-|- agent/         Agent implementation (loop, tools, LLM, memory)
+|- agent/         Agent implementation (loop, tools, LLM, memory, skills)
 |- channels/      Input/output devices and the message bus
 |- dao/           Database models and DAO operations
 |- config/        Configuration
@@ -132,6 +134,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook server: host/port, auth token, rate limit |
 | `ENABLE_FEISHU` / `FEISHU_*` | Feishu/Lark app credentials |
 | `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
+| `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
 
 ---
 
@@ -165,6 +168,8 @@ LemonClaw receives events through pluggable input channels and replies through m
 | `email` | Send email via SMTP | optional (needs `EMAIL_*`) |
 | `bash` | Run shell commands | optional (needs `ENABLE_BASH_TOOL=true`) |
 | `memory` | Read / write persistent memory | optional (needs `ENABLE_MEMORY=true`) |
+| `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
+| `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |
 
 > Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
 
@@ -178,7 +183,57 @@ When `ENABLE_MEMORY=true`, LemonClaw maintains persistent memory in the single S
 - **Session archival** — at session end, the conversation is summarized and archived so it can be recalled later.
 - **Context injection** — relevant memory is injected into the agent's context under a token budget (`MEMORY_MAX_CONTEXT_TOKENS`), prioritizing core memory → recent sessions → retrieved chunks.
 
-See [`.doc/持久化记忆读写-Spec.md`](.doc/持久化记忆读写-Spec.md) for the full design spec, or manage memory live via the `/memory`, `/chunk`, and `/session` commands.
+To manage memory live via the `/memory`, `/chunk`, and `/session` commands.
+
+---
+
+## 🧩 Skills System
+
+When `ENABLE_SKILLS=true` (default), LemonClaw turns reusable workflows into on-demand **skill packages**. Drop a skill folder under `.lemonclaw/skills/` and the agent can discover and load it at runtime.
+
+### Skill package format (OpenClaw-compatible)
+
+```
+.lemonclaw/skills/<name>-<version>/
+├── SKILL.md         # required - YAML frontmatter (name/description/tags) + markdown instructions
+├── _meta.json       # optional - slug/version metadata
+├── requirements.txt # optional - Python deps (enables run_skill_script for this skill)
+├── package.json     # optional - Node deps
+└── *.md             # optional - extra reference docs (appended to the loaded content)
+```
+
+`SKILL.md` frontmatter example:
+
+```yaml
+---
+name: weekly-report
+description: Generate a weekly work summary
+tags: [report, work]
+metadata:
+  openclaw:
+    emoji: 📊
+    requires:
+      env:
+        - BOCHA_API_KEY   # skill declares required env vars
+    primaryEnv: BOCHA_API_KEY
+---
+```
+
+### How it works
+
+- **Discovery** - on startup and `/skills reload`, the skill directory is scanned and metadata is indexed in the SQLite DB.
+- **Routing** - the summary (name + description + tags) of all *available* skills is injected into the system prompt every turn, so the LLM can pick the right skill.
+- **Activation** - the agent calls `load_skill(name)` to activate a skill; its full instructions are then injected every turn by the context middleware (not stored in message history, so context compression can't lose them).
+- **LRU + unload** - at most `MAX_ACTIVE_SKILLS` (default 5) skills stay active (LRU eviction); the agent calls `unload_skill(name)` when done.
+- **Hot reload** - add/modify/delete skill packages, run `/skills reload`, and changes take effect immediately without restarting.
+
+### Sensitive parameters (API keys, etc.)
+
+Skills declare required env vars in frontmatter. Configure them **once** in `.lemonclaw/.env`; `/skills reload` picks up new keys. A skill whose required env vars are missing is marked `⚠ missing config` and hidden from the agent. Secrets never enter the LLM context - skill bodies use `${VAR}` placeholders that `http_request` resolves server-side.
+
+### Script skills (Python / Node)
+
+If a skill ships a `requirements.txt` / `package.json`, install its deps once with `/skills setup <name>` (isolated venv / `node_modules`, China-friendly mirror defaults). Run scripts via the `run_skill_script` tool (gated by `ENABLE_SKILL_SCRIPT`, off by default; path-contained, no shell, cross-platform). Node skills require `node`/`npm` preinstalled in the image.
 
 ---
 
@@ -196,7 +251,7 @@ Available inside any conversation (type `/help` for the full list):
 | `/chunk` | Manage long-term memory chunks (list/add/get/delete/search) |
 | `/memory` | Manage core memory (set/get/delete/list) |
 | `/cron` | List and manage scheduled tasks (`/cron help` for subcommands) |
-| `/skills` / `/skills refresh` | List available skills / refresh the skill index |
+| `/skills` | List and manage skills (`/skills help` for subcommands: list/show/enable/disable/unload/setup/reload) |
 | `/exit` `/quit` `/q` | Exit |
 
 ---

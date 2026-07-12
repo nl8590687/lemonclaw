@@ -92,6 +92,14 @@ class GlobalConfig(BaseSettings):
     MEMORY_MAX_SEARCH_CHUNKS: int = int(os.environ.get("MEMORY_MAX_SEARCH_CHUNKS", 100))
     MEMORY_AUTO_ARCHIVE: bool = str(os.environ.get("MEMORY_AUTO_ARCHIVE", "true")).lower() == "true"
 
+    # Skills 技能系统
+    ENABLE_SKILLS: bool = str(os.environ.get("ENABLE_SKILLS", "true")).lower() == "true"
+    ENABLE_SKILL_SCRIPT: bool = str(os.environ.get("ENABLE_SKILL_SCRIPT", "false")).lower() == "true"
+    MAX_ACTIVE_SKILLS: int = int(os.environ.get("MAX_ACTIVE_SKILLS", 5))
+    PIP_INDEX_URL: str = os.environ.get("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")
+    NPM_REGISTRY: str = os.environ.get("NPM_REGISTRY", "https://registry.npmmirror.com")
+    SKILL_SCRIPT_TIMEOUT: int = int(os.environ.get("SKILL_SCRIPT_TIMEOUT", 120))
+
 
 def load_config() -> GlobalConfig:
     """

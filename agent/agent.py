@@ -28,6 +28,7 @@ from agent.tools import create_tool_list
 from agent.callback import StreamingCallback
 from agent.context_agent import ContextAgent
 from agent.memory import get_memory_manager, MemoryMiddleware
+from agent.skill import get_skill_manager
 from channels.out.stdout import TerminalOutputChannel
 from config import get_global_config
 from dao.memory import CoreMemory
@@ -49,11 +50,14 @@ class AgentService:
         self.memory = get_memory_manager() if config.ENABLE_MEMORY else None
         if self.memory:
             self.memory.on_session_start()
+        # 【新增】技能系统
+        self.skill_manager = get_skill_manager() if config.ENABLE_SKILLS else None
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
         self.checkpointer = MemorySaver()
-        # 记忆上下文由 MemoryMiddleware 在每次模型调用时动态拼入 system_message
-        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT)] if self.memory else []
+        # 挂载统一上下文中间件（记忆或技能任一开启即挂载；base_prompt 固定 BASE，
+        # 技能摘要与活跃全文由中间件每轮现取）
+        mw = self._build_middleware()
         self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer, middleware=mw)
         self.session_id = "session-default"
         self.max_iterations = config.AGENT_REACT_MAX_ITERATIONS
@@ -160,10 +164,25 @@ class AgentService:
                 "system_count": 0
             }
 
+    def _build_middleware(self) -> list:
+        """构造上下文中间件并刷新 self._middleware 引用。
+        记忆或技能任一开启 -> 挂载 MemoryMiddleware（base_prompt 固定 BASE_SYSTEM_PROMPT，
+        技能摘要与活跃全文由中间件每轮现取）；两者均关 -> 返回 []。"""
+        need_mw = bool(self.memory or self.skill_manager)
+        if not need_mw:
+            self._middleware = None
+            return []
+        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT, skill_manager=self.skill_manager)]
+        self._middleware = mw[0]
+        return mw
+
     def _rebuild_agent(self):
-        """重建工作记忆：新 MemorySaver + 重建 agent + 重置统计"""
+        """重建工作记忆：新 MemorySaver + 重建 agent（含中间件）+ 重置统计。
+        修复：原实现未传 middleware，导致 /clear、/resume 后记忆与技能注入丢失；
+        现复用 _build_middleware() 重新挂载。"""
         self.checkpointer = MemorySaver()
-        self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer)
+        mw = self._build_middleware()
+        self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer, middleware=mw)
         self.stats = {
             "context_tokens": {
                 "total_prompt_tokens": 0,
@@ -197,6 +216,8 @@ class AgentService:
                 self.memory.on_session_end(self._current_messages())
             except Exception as ex:
                 self.default_out_chan.write_system_error(f"memory archive error: {ex}")
+        if self.skill_manager:
+            self.skill_manager.reset_active()
         self._rebuild_agent()
         if self.memory:
             self.memory.on_session_start()
@@ -229,6 +250,57 @@ class AgentService:
                 {"messages": msgs},
             )
         return True
+
+    # ============ Skills 技能系统委托 ============
+
+    def is_skills_enabled(self) -> bool:
+        return self.skill_manager is not None
+
+    def list_skills(self) -> list:
+        if not self.skill_manager:
+            return []
+        return self.skill_manager.list_skills()
+
+    def get_skill(self, name: str):
+        if not self.skill_manager:
+            return None
+        return self.skill_manager.get_skill(name)
+
+    def enable_skill(self, name: str) -> bool:
+        if not self.skill_manager:
+            return False
+        return self.skill_manager.enable(name)
+
+    def disable_skill(self, name: str) -> bool:
+        if not self.skill_manager:
+            return False
+        return self.skill_manager.disable(name)
+
+    def load_skill(self, name: str) -> str:
+        if not self.skill_manager:
+            return "技能功能未启用"
+        return self.skill_manager.load_skill(name)
+
+    def unload_skill(self, name: str) -> str:
+        if not self.skill_manager:
+            return "技能功能未启用"
+        return self.skill_manager.unload_skill(name)
+
+    def setup_skill_deps(self, name: str) -> tuple[bool, str]:
+        if not self.skill_manager:
+            return False, "技能功能未启用"
+        return self.skill_manager.setup_deps(name)
+
+    def run_skill_script(self, name: str, script: str, args: str = "") -> str:
+        if not self.skill_manager:
+            return "技能功能未启用"
+        return self.skill_manager.run_script(name, script, args)
+
+    def reload_skills(self) -> None:
+        """热加载：仅 skill_manager.reload()；摘要与活跃全文由中间件下轮现取自动反映。"""
+        if not self.skill_manager:
+            return
+        self.skill_manager.reload()
 
     def trim_msg_history(self):
         try:
