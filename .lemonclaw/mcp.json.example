@@ -1,0 +1,17 @@
+{
+  "_comment": "MCP 服务端声明式配置。顶层 key 为 server_id（须匹配 ^[a-zA-Z0-9_-]+$，JSON 对象 key 天然唯一），同时作为注册工具名前缀 mcp__<id>__<tool>。此文件为示例模板（占位值，可 Git 跟踪）；实际配置 .lemonclaw/mcp.json 含真实密钥，已被 .gitignore 忽略。",
+  "_comment_headers": "headers 含认证密钥，直接存值（如 Bearer token）；headers 为 MCPConnection 服务端连接配置，不进入 LLM 上下文。",
+  "_comment_auto_connect": "auto_connect 缺省视为 true；enabled 为 DB 管理状态（/mcp enable|disable），不在本文件。",
+
+  "mindoc": {
+    "url": "https://mindoc.example.com/mcp",
+    "headers": {"Authorization": "Bearer your-mindoc-token-here"},
+    "auto_connect": true
+  },
+
+  "github": {
+    "url": "https://api.github.example/mcp",
+    "headers": {"Authorization": "Bearer ghp_your-github-token-here"},
+    "auto_connect": true
+  }
+}

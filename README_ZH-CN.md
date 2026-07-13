@@ -19,6 +19,7 @@ LemonClaw 是一个开源的通用 AI Agent 框架，能把任意大模型变成
 - 🛠️ **16+ 内置工具** —— 文件编辑、grep/glob、git、网页抓取、联网搜索、邮件、HTTP、Shell、定时任务、记忆等。
 - 🧠 **持久化记忆** —— 基于 TF-IDF 的长期记忆块检索 + 会话自动归档，让上下文跨会话保留。
 - 🧩 **技能系统** -- 按需加载的技能包（`SKILL.md`），支持热加载、LRU 活跃集注入、敏感参数门禁与可选脚本执行。
+- 🔌 **MCP 接入** -- 通过 Streamable HTTP 接入外部 MCP 服务端；每个远程工具注册为原生 Agent 工具（`mcp__<服务名>__<工具名>`），在 `.lemonclaw/mcp.json` 声明，支持热重载且不中断当前对话。
 - 🔌 **OpenAI 兼容** —— 支持任意 OpenAI 兼容接口（DeepSeek、OpenAI、本地服务……）。
 - ⏰ **内置调度** —— 运行时创建与管理定时任务，Agent 可自行安排后续动作。
 - 🐳 **一键 Docker 部署** —— 镜像支持时区配置，挂载配置目录即可运行。
@@ -45,6 +46,7 @@ flowchart LR
     Agent --> Tools[工具<br/>16+ 内置]
     Agent --> Mem[记忆<br/>TF-IDF + 归档]
     Agent --> Skills[技能<br/>load/unload + 注入]
+    Agent --> MCP[MCP<br/>streamable HTTP]
     Agent --> Out[输出通道]
     Cmd --> Out
     Out --> Resp[终端 / 飞书]
@@ -56,8 +58,9 @@ flowchart LR
 |- .lemonclaw/    LemonClaw 核心配置存储目录
 |--- .env         环境变量配置文件
 |--- .env.example 环境变量配置样例文件
+|--- mcp.json     MCP 服务端配置（Streamable HTTP；含密钥，已 gitignore）
 |--- lemonclaw.db 全局 SQLite3 数据库（整个项目仅此一个库）
-|- agent/         Agent 实现模块（循环、工具、LLM、记忆、技能）
+|- agent/         Agent 实现模块（循环、工具、LLM、记忆、技能、MCP）
 |- channels/      输入输出设备和通道、消息总线
 |- dao/           数据库 model 和 dao 操作模块
 |- config/        配置相关代码模块
@@ -135,6 +138,7 @@ docker run -e TZ=Asia/Shanghai \
 | `ENABLE_FEISHU` / `FEISHU_*` | 飞书/Lark 应用凭证 |
 | `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
+| `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
 
 ---
 
@@ -170,6 +174,7 @@ LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出�
 | `memory` | 读写持久化记忆 | 可选（需 `ENABLE_MEMORY=true`） |
 | `load_skill` / `unload_skill` | 激活 / 卸载技能（指令由中间件注入） | 可选（需 `ENABLE_SKILLS=true`） |
 | `run_skill_script` | 在技能隔离环境执行 Python/Node 脚本 | 可选（需 `ENABLE_SKILL_SCRIPT=true`） |
+| `mcp__<服务名>__<工具名>` | 已连接 MCP 服务端暴露的工具（Streamable HTTP） | 可选（需 `ENABLE_MCP=true` + `.lemonclaw/mcp.json`） |
 
 > 可扩展：在 `agent/tools/` 下新增工具，并在 `create_tool_list()` 中注册即可。
 
@@ -237,6 +242,56 @@ metadata:
 
 ---
 
+## 🔌 MCP 接入
+
+当 `ENABLE_MCP=true`（默认）时，LemonClaw 作为 **MCP 客户端**通过 **Streamable HTTP** 接入（不支持 stdio）。每个已连接 MCP 服务端暴露的工具都会注册为原生 Agent 工具，命名 `mcp__<server_id>__<tool>`，LLM 可带完整参数 schema 直接调用。
+
+> LemonClaw 仅作为 MCP **客户端**（消费外部工具），不对外提供 MCP 服务端能力。
+
+### 配置服务端（`.lemonclaw/mcp.json`）
+
+服务端在 `.lemonclaw/mcp.json` 中声明--一个以 `server_id` 为 key 的 JSON 对象（对象 key 天然唯一，且 id 同时作为工具名前缀）。编辑该文件后执行 `/mcp reload`（或重启）即生效，**无需 CLI**，适合 Docker / 只读部署。
+
+```json
+{
+  "mindoc": {
+    "url": "https://mindoc.example.com/mcp",
+    "headers": {"Authorization": "Bearer ghs_xxxxxxxx"},
+    "auto_connect": true
+  },
+  "github": {
+    "url": "https://api.github.example/mcp",
+    "headers": {},
+    "auto_connect": true
+  }
+}
+```
+
+- `url` - MCP Streamable HTTP 端点。
+- `headers` - 额外请求头。**认证密钥直接写在这里**（见下方安全说明）。
+- `auto_connect` - 是否启动时自动连接（默认 `true`）。
+- `enabled` **不在文件中**--它是 DB 管理状态，由 `/mcp enable|disable` 切换。
+
+模板见 `.lemonclaw/mcp.json.example`（占位值，可安全提交）。
+
+### 安全：密钥不进入 LLM 上下文
+
+`headers`（含 token）是 `MCPConnection` 持有的**服务端连接配置**，绝不放入工具名 / 描述 / 参数 / 结果，因此不会进入 LLM 上下文、DB 镜像的 checkpointer 或 LLM API 请求体。因 `mcp.json` 含密钥，已 **gitignore**；团队共享配置用 `mcp.json.example` 模板。（这与技能系统不同--技能正文会被注入系统提示，故需 `${VAR}` 占位符；MCP 的 headers 不注入，无需占位符。）
+
+### 工作机制
+
+- **发现** - 启动时与 `/mcp reload` 时，每个 enabled 服务端执行连接：`initialize` 握手 -> `Mcp-Session-Id` -> `notifications/initialized` -> `tools/list`。每个远程工具成为 `mcp__<id>__<tool>` Agent 工具。
+- **调用** - LLM 调用工具；`MCPConnection` 发起 `tools/call`（兼容 `application/json` 与 `text/event-stream` 两种响应），格式化并截断结果。
+- **热重载** - `/mcp reload`（或 `add`/`remove`/`enable`/`disable`/`reconnect`）重读 `mcp.json`、重连、**重建 agent 同时保留 checkpointer**--当前对话不中断。
+- **上限** - 单服务端 `MCP_MAX_TOOLS`（默认 100）、全局硬上限 200 个 MCP 工具；结果按 `MCP_RESULT_MAX_CHARS`（默认 20000）截断。
+- **容错** - 单个服务端不可达不影响其他服务端与内置工具；`ENABLE_MCP=false` 或初始化失败降级为"无 MCP 工具"，不阻塞 Agent。
+
+### 运行时管理
+
+`/mcp` 命令（输入 `/mcp help` 查看完整列表）：`list`、`add <id> <url> [headers_json]`（回写 `mcp.json`）、`remove`、`enable`、`disable`、`tools <id>`、`reconnect`、`reload`、`call <id> <tool> [json_args]`。命令输出不展示 headers 值。
+
+---
+
 ## 💬 斜杠命令
 
 在任意对话中可用（输入 `/help` 查看完整列表）：
@@ -252,6 +307,7 @@ metadata:
 | `/memory` | 管理核心记忆（set/get/delete/list） |
 | `/cron` | 列出并管理定时任务（`/cron help` 查看子命令） |
 | `/skills` | 列出并管理技能（`/skills help` 查看子命令：list/show/enable/disable/unload/setup/reload） |
+| `/mcp` | 列出并管理 MCP 服务端（`/mcp help` 查看子命令：list/add/remove/enable/disable/tools/reconnect/reload/call） |
 | `/exit` `/quit` `/q` | 退出 |
 
 ---

@@ -29,6 +29,7 @@ from agent.callback import StreamingCallback
 from agent.context_agent import ContextAgent
 from agent.memory import get_memory_manager, MemoryMiddleware
 from agent.skill import get_skill_manager
+from agent.mcp import get_mcp_manager
 from channels.out.stdout import TerminalOutputChannel
 from config import get_global_config
 from dao.memory import CoreMemory
@@ -52,6 +53,8 @@ class AgentService:
             self.memory.on_session_start()
         # 【新增】技能系统
         self.skill_manager = get_skill_manager() if config.ENABLE_SKILLS else None
+        # 【新增】MCP 接入系统（None 时 create_tool_list 内 create_mcp_tools(None) 返回空列表）
+        self.mcp_manager = get_mcp_manager() if config.ENABLE_MCP else None
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
         self.checkpointer = MemorySaver()
@@ -301,6 +304,77 @@ class AgentService:
         if not self.skill_manager:
             return
         self.skill_manager.reload()
+
+    # ============ MCP 接入委托 ============
+
+    def is_mcp_enabled(self) -> bool:
+        return self.mcp_manager is not None
+
+    def list_mcp_servers(self) -> list:
+        if not self.mcp_manager:
+            return []
+        return self.mcp_manager.list_servers()
+
+    def add_mcp_server(self, server_id: str, url: str, headers: dict) -> tuple[bool, str]:
+        if not self.mcp_manager:
+            return False, "MCP 功能未启用"
+        return self.mcp_manager.add_server(server_id, url, headers)
+
+    def remove_mcp_server(self, server_id: str) -> bool:
+        if not self.mcp_manager:
+            return False
+        return self.mcp_manager.remove_server(server_id)
+
+    def enable_mcp_server(self, server_id: str) -> tuple[bool, str]:
+        if not self.mcp_manager:
+            return False, "MCP 功能未启用"
+        return self.mcp_manager.enable_server(server_id)
+
+    def disable_mcp_server(self, server_id: str) -> tuple[bool, str]:
+        if not self.mcp_manager:
+            return False, "MCP 功能未启用"
+        return self.mcp_manager.disable_server(server_id)
+
+    def reconnect_mcp_server(self, server_id: str) -> tuple[bool, str]:
+        if not self.mcp_manager:
+            return False, "MCP 功能未启用"
+        return self.mcp_manager.reconnect(server_id)
+
+    def list_mcp_tools(self, server_id: str) -> list:
+        if not self.mcp_manager:
+            return []
+        return self.mcp_manager.list_tools(server_id)
+
+    def call_mcp_tool(self, server_id: str, tool_name: str, arguments: dict) -> str:
+        if not self.mcp_manager:
+            return "MCP 功能未启用"
+        return self.mcp_manager.call_tool(server_id, tool_name, arguments)
+
+    def reload_mcp(self) -> None:
+        """ /mcp reload：全量重载（manager.reload + 重建 agent）。"""
+        self.reload_mcp_tools()
+
+    def reload_mcp_tools(self) -> None:
+        """MCP 全量热重载：manager.reload()（重读 mcp.json + 重连 enabled）+ 重建 agent。
+        重建复用 self.checkpointer（对话不中断），复用 _build_middleware（记忆/技能注入不丢）。"""
+        if not self.mcp_manager:
+            return
+        self.mcp_manager.reload()
+        self._rebuild_agent_with_tools()
+
+    def rebuild_mcp_tools(self) -> None:
+        """工具集变化（add/remove/enable/disable/reconnect）后轻量重建 agent（不重连）。
+        复用 self.checkpointer；仅重新收集工具 + 重建 agent。"""
+        if not self.mcp_manager:
+            return
+        self._rebuild_agent_with_tools()
+
+    def _rebuild_agent_with_tools(self) -> None:
+        """重新收集工具并重建 agent，复用 checkpointer 与中间件。"""
+        self.tools = self._create_tool_list()
+        mw = self._build_middleware()
+        self.agent = _create_agent(self.llm, self.tools, get_system_prompt(),
+                                   self.checkpointer, middleware=mw)
 
     def trim_msg_history(self):
         try:

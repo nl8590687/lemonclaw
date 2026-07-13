@@ -33,10 +33,12 @@ from agent.tools.grep_tool import GrepTool, create_grep_tool
 from agent.tools.cron_tool import create_cron_tools
 from agent.tools.memory_tool import create_memory_tools
 from agent.tools.skill_tool import create_skill_tools
+from agent.tools.mcp_tool import create_mcp_tools
 from channels.device.crontab import get_cron_manager
 from config import get_global_config
 from agent.memory import get_memory_manager
 from agent.skill import get_skill_manager
+from agent.mcp import get_mcp_manager
 
 __all__ = [
     "create_bocha_tool",
@@ -56,6 +58,7 @@ __all__ = [
     "create_cron_tools",
     "create_memory_tools",
     "create_skill_tools",
+    "create_mcp_tools",
 ]
 
 
@@ -100,5 +103,9 @@ def create_tool_list() -> dict[str, Any]:
     if config.ENABLE_SKILLS:
         tools.extend(create_skill_tools(get_skill_manager(),
                                         enable_script=config.ENABLE_SKILL_SCRIPT))
+
+    # MCP 接入工具（与 AgentService 共享同一个 MCPManager 单例；manager 为 None 时返回空列表）
+    if config.ENABLE_MCP:
+        tools.extend(create_mcp_tools(get_mcp_manager()))
 
     return tools

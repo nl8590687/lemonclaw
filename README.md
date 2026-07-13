@@ -19,6 +19,7 @@ LemonClaw is an open-source, general-purpose AI agent framework that turns any L
 - 🛠️ **16+ built-in tools** — file editing, grep/glob, git, web fetch, web search, email, HTTP, shell, cron, memory, and more.
 - 🧠 **Persistent memory** — TF-IDF retrieval over long-term memory chunks plus automatic session archival, so context survives across sessions.
 - 🧩 **Skills** — on-demand skill packages (`SKILL.md`) with hot-reload, LRU active-set injection, sensitive-param gating, and optional script execution.
+- 🔌 **MCP integration** - connect external MCP servers over Streamable HTTP; each remote tool becomes a first-class agent tool (`mcp__<server>__<tool>`), declared in `.lemonclaw/mcp.json` and hot-reloadable without losing the conversation.
 - 🔌 **OpenAI-compatible** — works with any OpenAI-compatible API (DeepSeek, OpenAI, local servers, …).
 - ⏰ **Built-in scheduling** — create and manage cron tasks at runtime; the agent can schedule its own follow-ups.
 - 🐳 **One-command Docker deploy** — timezone-aware image, just mount the config dir.
@@ -45,6 +46,7 @@ flowchart LR
     Agent --> Tools[Tools<br/>16+ built-in]
     Agent --> Mem[Memory<br/>TF-IDF + Archive]
     Agent --> Skills[Skills<br/>load/unload + inject]
+    Agent --> MCP[MCP<br/>streamable HTTP]
     Agent --> Out[Output Channel]
     Cmd --> Out
     Out --> Resp[Terminal / Feishu]
@@ -56,8 +58,9 @@ flowchart LR
 |- .lemonclaw/    LemonClaw core config storage
 |--- .env         Environment variables
 |--- .env.example Example env file
+|--- mcp.json     MCP server config (Streamable HTTP; gitignored - contains secrets)
 |--- lemonclaw.db Global SQLite3 database (single DB for the whole project)
-|- agent/         Agent implementation (loop, tools, LLM, memory, skills)
+|- agent/         Agent implementation (loop, tools, LLM, memory, skills, MCP)
 |- channels/      Input/output devices and the message bus
 |- dao/           Database models and DAO operations
 |- config/        Configuration
@@ -135,6 +138,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `ENABLE_FEISHU` / `FEISHU_*` | Feishu/Lark app credentials |
 | `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
+| `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
 
 ---
 
@@ -170,6 +174,7 @@ LemonClaw receives events through pluggable input channels and replies through m
 | `memory` | Read / write persistent memory | optional (needs `ENABLE_MEMORY=true`) |
 | `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
 | `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |
+| `mcp__<server>__<tool>` | Tools from connected MCP servers (Streamable HTTP) | optional (needs `ENABLE_MCP=true` + `.lemonclaw/mcp.json`) |
 
 > Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
 
@@ -237,6 +242,56 @@ If a skill ships a `requirements.txt` / `package.json`, install its deps once wi
 
 ---
 
+## 🔌 MCP Integration
+
+When `ENABLE_MCP=true` (default), LemonClaw acts as an **MCP client** over **Streamable HTTP** (stdio is not supported). Each tool exposed by a connected MCP server is registered as a first-class agent tool named `mcp__<server_id>__<tool>`, so the LLM can call it directly with full parameter schemas.
+
+> LemonClaw is MCP **client only** (it consumes external tools); it does not expose itself as an MCP server.
+
+### Configure servers (`.lemonclaw/mcp.json`)
+
+Servers are declared in `.lemonclaw/mcp.json` - a JSON object keyed by `server_id` (object keys are unique by definition, and the id doubles as the tool-name prefix). Edit the file and run `/mcp reload` (or restart) - no CLI needed, which suits Docker / read-only deployments.
+
+```json
+{
+  "mindoc": {
+    "url": "https://mindoc.example.com/mcp",
+    "headers": {"Authorization": "Bearer ghs_xxxxxxxx"},
+    "auto_connect": true
+  },
+  "github": {
+    "url": "https://api.github.example/mcp",
+    "headers": {},
+    "auto_connect": true
+  }
+}
+```
+
+- `url` - the MCP Streamable HTTP endpoint.
+- `headers` - extra request headers. **Auth secrets go directly here** (see security below).
+- `auto_connect` - whether to connect on startup (default `true`).
+- `enabled` is **not** in the file - it's a DB management state toggled by `/mcp enable|disable`.
+
+A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, safe to commit).
+
+### Security: secrets never reach the LLM
+
+`headers` (including tokens) are **server-side connection config** held by `MCPConnection`. They are never placed in the tool name / description / arguments / result, so they never enter the LLM context, the DB-mirrored checkpointer, or the LLM API payload. Because `mcp.json` contains secrets, it is **gitignored**; share configs via the `mcp.json.example` template. (This differs from Skills, which need `${VAR}` placeholders because skill bodies are injected into the system prompt - MCP headers are not.)
+
+### How it works
+
+- **Discovery** - on startup and `/mcp reload`, each enabled server is connected: `initialize` handshake -> `Mcp-Session-Id` -> `notifications/initialized` -> `tools/list`. Each remote tool becomes an `mcp__<id>__<tool>` agent tool.
+- **Calling** - the LLM calls the tool; `MCPConnection` issues `tools/call` (parsing both `application/json` and `text/event-stream` responses), then formats and truncates the result.
+- **Hot reload** - `/mcp reload` (or `add`/`remove`/`enable`/`disable`/`reconnect`) re-reads `mcp.json`, reconnects, and **rebuilds the agent while preserving the checkpointer** - the current conversation continues uninterrupted.
+- **Limits** - per-server `MCP_MAX_TOOLS` (default 100) and a global hard cap of 200 registered MCP tools; results truncated to `MCP_RESULT_MAX_CHARS` (default 20000).
+- **Resilience** - one unreachable server doesn't affect others or built-in tools; `ENABLE_MCP=false` or init failure degrades to "no MCP tools" without blocking the agent.
+
+### Manage at runtime
+
+`/mcp` commands (type `/mcp help` for the full list): `list`, `add <id> <url> [headers_json]` (writes back to `mcp.json`), `remove`, `enable`, `disable`, `tools <id>`, `reconnect`, `reload`, `call <id> <tool> [json_args]`. Command output never displays header values.
+
+---
+
 ## 💬 Slash Commands
 
 Available inside any conversation (type `/help` for the full list):
@@ -252,6 +307,7 @@ Available inside any conversation (type `/help` for the full list):
 | `/memory` | Manage core memory (set/get/delete/list) |
 | `/cron` | List and manage scheduled tasks (`/cron help` for subcommands) |
 | `/skills` | List and manage skills (`/skills help` for subcommands: list/show/enable/disable/unload/setup/reload) |
+| `/mcp` | List and manage MCP servers (`/mcp help` for subcommands: list/add/remove/enable/disable/tools/reconnect/reload/call) |
 | `/exit` `/quit` `/q` | Exit |
 
 ---

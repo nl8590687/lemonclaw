@@ -221,3 +221,5 @@ __marimo__/
 .copyright-template
 .claude/
 lemonclaw.db
+.lemonclaw/skills/
+.lemonclaw/mcp.json

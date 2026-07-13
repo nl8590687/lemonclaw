@@ -100,6 +100,13 @@ class GlobalConfig(BaseSettings):
     NPM_REGISTRY: str = os.environ.get("NPM_REGISTRY", "https://registry.npmmirror.com")
     SKILL_SCRIPT_TIMEOUT: int = int(os.environ.get("SKILL_SCRIPT_TIMEOUT", 120))
 
+    # MCP 接入（仅 Streamable HTTP）
+    ENABLE_MCP: bool = str(os.environ.get("ENABLE_MCP", "true")).lower() == "true"
+    MCP_CONNECT_TIMEOUT: int = int(os.environ.get("MCP_CONNECT_TIMEOUT", 30))
+    MCP_CALL_TIMEOUT: int = int(os.environ.get("MCP_CALL_TIMEOUT", 300))
+    MCP_MAX_TOOLS: int = int(os.environ.get("MCP_MAX_TOOLS", 100))
+    MCP_RESULT_MAX_CHARS: int = int(os.environ.get("MCP_RESULT_MAX_CHARS", 20000))
+
 
 def load_config() -> GlobalConfig:
     """

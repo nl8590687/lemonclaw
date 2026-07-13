@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 
 from rich.table import Table
@@ -57,6 +58,12 @@ def _print_help(out_chan: BaseOutChannel):
     table.add_row("/skills unload <名称>", "卸载已激活技能")
     table.add_row("/skills setup <名称>", "安装技能依赖")
     table.add_row("/skills reload", "热加载（重扫目录刷新索引）")
+    table.add_row("")
+    table.add_row("[bold cyan]MCP 接入[/]", "")
+    table.add_row("/mcp", "列出 MCP 服务端（/mcp help 查看子命令）")
+    table.add_row("/mcp add <id> <url> [headers]", "注册并连接 MCP 服务端（回写 mcp.json）")
+    table.add_row("/mcp tools <id>", "查看服务端暴露的工具")
+    table.add_row("/mcp reload", "重载 mcp.json（对话不中断）")
     table.add_row("")
     table.add_row("[bold cyan]定时任务[/]", "")
     table.add_row("/cron", "列出所有定时任务（/cron help 查看子命令）")
@@ -785,6 +792,229 @@ def _handle_cron(out_chan: BaseOutChannel, command: str) -> bool:
     return True
 
 
+# ============ MCP 接入命令 ============
+
+_MCP_STATUS_LABEL = {
+    "connected": "[green]已连接[/]",
+    "connecting": "[yellow]连接中[/]",
+    "error": "[red]错误[/]",
+    "disconnected": "[dim]未连接[/]",
+}
+
+
+def _mcp_list(out_chan: BaseOutChannel, agent_service: AgentService):
+    servers = agent_service.list_mcp_servers()
+    if not servers:
+        out_chan.write_menu_content("[dim]当前没有 MCP 服务端（编辑 .lemonclaw/mcp.json 或 /mcp add 注册）[/dim]\n")
+        return
+    table = Table(title="MCP 服务端", show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="bold yellow")
+    table.add_column("状态")
+    table.add_column("工具数")
+    table.add_column("启用")
+    table.add_column("调用")
+    table.add_column("URL")
+    for s in servers:
+        status = _MCP_STATUS_LABEL.get(s.status, s.status)
+        if s.status == "error" and s.last_error:
+            status += f"\n[dim]{(s.last_error or '')[:60]}[/]"
+        table.add_row(s.server_id, status, str(s.tool_count),
+                      "✓" if s.enabled else "✗", str(s.access_count), s.url)
+    out_chan.write_menu_content(table)
+
+
+def _mcp_add(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    parts = command.split(None, 3)
+    if len(parts) < 4:
+        out_chan.write_menu_content(
+            "[warning]用法: /mcp add <id> <url> [headers_json][/warning]\n"
+            "示例: /mcp add mindoc https://host/mcp\n"
+            '      /mcp add mindoc https://host/mcp {"Authorization":"Bearer xxx"}\n'
+        )
+        return
+    server_id = parts[2]
+    rest = parts[3].strip()
+    sub = rest.split(None, 1)
+    url = sub[0]
+    headers: dict = {}
+    if len(sub) > 1 and sub[1].strip():
+        try:
+            headers = json.loads(sub[1].strip())
+            if not isinstance(headers, dict):
+                out_chan.write_menu_content("[warning]headers 须为 JSON 对象[/warning]\n")
+                return
+        except json.JSONDecodeError as e:
+            out_chan.write_menu_content(f"[warning]headers JSON 解析失败: {e}[/warning]\n")
+            return
+    ok, msg = agent_service.add_mcp_server(server_id, url, headers)
+    if ok:
+        out_chan.write_menu_content(f"[success]✅ {server_id}: {msg}[/success]\n")
+    else:
+        out_chan.write_system_error(f"❌ {server_id}: {msg}")
+
+
+def _mcp_remove(out_chan: BaseOutChannel, agent_service: AgentService, parts: list):
+    server_id = parts[2] if len(parts) > 2 else None
+    if not server_id:
+        out_chan.write_menu_content("[warning]用法: /mcp remove <id>[/warning]\n")
+        return
+    if agent_service.remove_mcp_server(server_id):
+        out_chan.write_menu_content(f"[success]✅ 已删除 MCP 服务: {server_id}[/success]\n")
+    else:
+        out_chan.write_system_error(f"删除失败，MCP 服务不存在: {server_id}")
+
+
+def _mcp_enable(out_chan: BaseOutChannel, agent_service: AgentService, parts: list):
+    server_id = parts[2] if len(parts) > 2 else None
+    if not server_id:
+        out_chan.write_menu_content("[warning]用法: /mcp enable <id>[/warning]\n")
+        return
+    ok, msg = agent_service.enable_mcp_server(server_id)
+    if ok:
+        out_chan.write_menu_content(f"[success]✅ {server_id}: {msg}[/success]\n")
+    else:
+        out_chan.write_system_error(f"❌ {server_id}: {msg}")
+
+
+def _mcp_disable(out_chan: BaseOutChannel, agent_service: AgentService, parts: list):
+    server_id = parts[2] if len(parts) > 2 else None
+    if not server_id:
+        out_chan.write_menu_content("[warning]用法: /mcp disable <id>[/warning]\n")
+        return
+    ok, msg = agent_service.disable_mcp_server(server_id)
+    if ok:
+        out_chan.write_menu_content(f"[success]✅ {server_id}: {msg}[/success]\n")
+    else:
+        out_chan.write_system_error(f"❌ {server_id}: {msg}")
+
+
+def _mcp_reconnect(out_chan: BaseOutChannel, agent_service: AgentService, parts: list):
+    server_id = parts[2] if len(parts) > 2 else None
+    if not server_id:
+        out_chan.write_menu_content("[warning]用法: /mcp reconnect <id>[/warning]\n")
+        return
+    ok, msg = agent_service.reconnect_mcp_server(server_id)
+    if ok:
+        out_chan.write_menu_content(
+            f"[success]✅ {server_id}: 已重连（发现 {len(agent_service.list_mcp_tools(server_id))} 个工具）[/success]\n"
+        )
+    else:
+        out_chan.write_system_error(f"❌ {server_id}: {msg}")
+
+
+def _mcp_tools(out_chan: BaseOutChannel, agent_service: AgentService, parts: list):
+    server_id = parts[2] if len(parts) > 2 else None
+    if not server_id:
+        out_chan.write_menu_content("[warning]用法: /mcp tools <id>[/warning]\n")
+        return
+    tools = agent_service.list_mcp_tools(server_id)
+    if not tools:
+        out_chan.write_menu_content(f"[dim]MCP 服务 {server_id} 暂无工具（未连接或未发现）[/dim]\n")
+        return
+    table = Table(title=f"MCP 工具: {server_id}", show_header=True, header_style="bold cyan")
+    table.add_column("工具名", style="bold yellow")
+    table.add_column("描述")
+    for t in tools:
+        table.add_row(t.name, t.description)
+    out_chan.write_menu_content(table)
+
+
+def _mcp_reload(out_chan: BaseOutChannel, agent_service: AgentService):
+    agent_service.reload_mcp()
+    servers = agent_service.list_mcp_servers()
+    connected = sum(1 for s in servers if s.status == "connected")
+    out_chan.write_menu_content(
+        f"[success]✅ 已重载 {len(servers)} 个服务端（{connected} 个已连接，对话未中断）[/success]\n"
+    )
+
+
+def _mcp_call(out_chan: BaseOutChannel, agent_service: AgentService, command: str):
+    parts = command.split(None, 3)
+    if len(parts) < 4:
+        out_chan.write_menu_content(
+            "[warning]用法: /mcp call <id> <tool> [json_args][/warning]\n"
+            '示例: /mcp call mindoc search {"query":"x"}\n'
+        )
+        return
+    server_id = parts[2]
+    rest = parts[3].strip()
+    sub = rest.split(None, 1)
+    tool_name = sub[0]
+    arguments: dict = {}
+    if len(sub) > 1 and sub[1].strip():
+        try:
+            arguments = json.loads(sub[1].strip())
+            if not isinstance(arguments, dict):
+                out_chan.write_menu_content("[warning]args 须为 JSON 对象[/warning]\n")
+                return
+        except json.JSONDecodeError as e:
+            out_chan.write_menu_content(f"[warning]args JSON 解析失败: {e}[/warning]\n")
+            return
+    result = agent_service.call_mcp_tool(server_id, tool_name, arguments)
+    out_chan.write_menu_content(f"[bold]调用 {server_id}/{tool_name}：[/bold]\n{result}\n")
+
+
+def _mcp_help(out_chan: BaseOutChannel):
+    table = Table(title="MCP 命令", show_header=True, header_style="bold cyan")
+    table.add_column("命令", style="bold")
+    table.add_column("说明")
+    table.add_row("/mcp", "列出所有 MCP 服务端")
+    table.add_row("/mcp list", "列出所有 MCP 服务端")
+    table.add_row("/mcp add <id> <url> [headers_json]", "注册并连接 MCP 服务端（回写 mcp.json）")
+    table.add_row("/mcp remove <id>", "删除 MCP 服务端（从 mcp.json 移除）")
+    table.add_row("/mcp enable <id>", "启用 MCP 服务端")
+    table.add_row("/mcp disable <id>", "禁用 MCP 服务端（断开连接）")
+    table.add_row("/mcp tools <id>", "列出该服务端暴露的工具")
+    table.add_row("/mcp reconnect <id>", "重新连接服务端")
+    table.add_row("/mcp reload", "重载 mcp.json 并重连所有（对话不中断）")
+    table.add_row("/mcp call <id> <tool> [json_args]", "手动调用某工具（调试用）")
+    table.add_row("/mcp help", "显示本帮助")
+    out_chan.write_menu_content(table)
+
+
+def _handle_mcp(out_chan: BaseOutChannel, agent_service: AgentService, command: str) -> bool:
+    """处理 /mcp 命令，返回是否继续对话"""
+    parts = command.strip().split()
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+
+    if not agent_service.is_mcp_enabled():
+        out_chan.write_menu_content("[dim]MCP 功能未启用（ENABLE_MCP=false）[/dim]\n")
+        return True
+
+    tool_changed = False
+    if subcmd in ("list", "ls", "l"):
+        _mcp_list(out_chan, agent_service)
+    elif subcmd in ("add", "new"):
+        _mcp_add(out_chan, agent_service, command)
+        tool_changed = True
+    elif subcmd in ("remove", "rm", "del"):
+        _mcp_remove(out_chan, agent_service, parts)
+        tool_changed = True
+    elif subcmd in ("enable", "en"):
+        _mcp_enable(out_chan, agent_service, parts)
+        tool_changed = True
+    elif subcmd in ("disable", "dis"):
+        _mcp_disable(out_chan, agent_service, parts)
+        tool_changed = True
+    elif subcmd in ("tools", "t"):
+        _mcp_tools(out_chan, agent_service, parts)
+    elif subcmd in ("reconnect", "rc"):
+        _mcp_reconnect(out_chan, agent_service, parts)
+        tool_changed = True
+    elif subcmd in ("reload", "rl"):
+        _mcp_reload(out_chan, agent_service)   # reload_mcp 内部已重建 agent
+    elif subcmd in ("call", "c"):
+        _mcp_call(out_chan, agent_service, command)
+    elif subcmd in ("help", "h", "?"):
+        _mcp_help(out_chan)
+    else:
+        _mcp_help(out_chan)
+
+    if tool_changed:
+        agent_service.rebuild_mcp_tools()
+    return True
+
+
 def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, command: str) -> bool:
     """处理 / 命令，返回是否继续对话"""
     cmd = command.lower().strip()
@@ -826,6 +1056,10 @@ def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, comman
     # ============ Skill 技能命令 ============
     if cmd == "/skills" or cmd.startswith("/skills "):
         return _handle_skills(out_chan, agent_service, command)
+
+    # ============ MCP 接入命令 ============
+    if cmd == "/mcp" or cmd.startswith("/mcp "):
+        return _handle_mcp(out_chan, agent_service, command)
 
     # ============ Cron 定时任务命令 ============
     if cmd == "/cron" or cmd.startswith("/cron "):
