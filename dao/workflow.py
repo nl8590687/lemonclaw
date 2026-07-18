@@ -302,7 +302,7 @@ class WorkflowDAO:
         if workflow_id:
             clauses.append("workflow_id = ?")
             params.append(workflow_id)
-        if status:
+        if status and status != "all":
             if status == "active":
                 clauses.append("status IN ('running', 'paused')")
             else:
