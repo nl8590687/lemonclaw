@@ -84,7 +84,22 @@ cd lemonclaw
 pip install -r requirements.txt
 ```
 
-### Docker 部署
+### 预构建镜像（ghcr.io）
+
+直接从 GitHub Container Registry 拉取最新镜像：
+
+```bash
+docker pull ghcr.io/nl8590687/lemonclaw:latest
+
+docker run -e TZ=Asia/Shanghai \
+  -v ./.lemonclaw:/root/.lemonclaw \
+  -p 8765:8765 \
+  -d --name lemonclaw ghcr.io/nl8590687/lemonclaw:latest
+```
+
+拉取特定版本：`ghcr.io/nl8590687/lemonclaw:v0.1.0`（标签与 git tag 对应）。
+
+### Docker 部署（从源码构建）
 
 ```bash
 docker build --rm -t lemonclaw:0.0.1 .

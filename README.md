@@ -84,7 +84,22 @@ cd lemonclaw
 pip install -r requirements.txt
 ```
 
-### Run with Docker
+### Pre-built image (ghcr.io)
+
+Pull the latest image directly from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/nl8590687/lemonclaw:latest
+
+docker run -e TZ=Asia/Shanghai \
+  -v ./.lemonclaw:/root/.lemonclaw \
+  -p 8765:8765 \
+  -d --name lemonclaw ghcr.io/nl8590687/lemonclaw:latest
+```
+
+To pull a specific version: `ghcr.io/nl8590687/lemonclaw:v0.1.0` (tags match git tags).
+
+### Run with Docker (build from source)
 
 ```bash
 docker build --rm -t lemonclaw:0.0.1 .
