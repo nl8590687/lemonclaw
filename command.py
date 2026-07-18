@@ -1034,6 +1034,8 @@ def _handle_wf(out_chan: BaseOutChannel, agent_service: AgentService, command: s
 
     if subcmd in ("list", "ls", "l"):
         _wf_list(out_chan, agent_service)
+    elif subcmd in ("show", "s"):
+        _wf_show(out_chan, agent_service, parts)
     elif subcmd in ("runs", "r", "ps"):
         _wf_runs(out_chan, agent_service, parts)
     elif subcmd in ("resume", "rs"):
@@ -1059,6 +1061,15 @@ def _wf_list(out_chan, agent_service):
         err = f" ❌{w.last_error[:30]}" if w.last_error else ""
         lines.append(f"  {w.workflow_id} | {w.name} | v{w.version} | {'启用' if w.enabled else '禁用'}{err}\n")
     out_chan.write_menu_content("".join(lines))
+
+
+def _wf_show(out_chan, agent_service, parts):
+    run_id = parts[2] if len(parts) > 2 else ""
+    if not run_id:
+        out_chan.write_menu_content("用法: /wf show <id>\n")
+        return
+    wf = agent_service.get_workflow(run_id)
+    out_chan.write_menu_content(f"{wf.spec if wf else '❌ Not Found'}\n")
 
 
 def _wf_runs(out_chan, agent_service, parts):
@@ -1113,6 +1124,7 @@ def _wf_help(out_chan):
     out_chan.write_menu_content(
         "/wf 命令组：\n"
         "  /wf list            列出工作流定义\n"
+        "  /wf show <id>       展示指定工作流规格定义详情\n"
         "  /wf runs [status]   列出 run（active/running/paused/all）\n"
         "  /wf resume <id> <答复>  续跑暂停的 run\n"
         "  /wf cancel <id>     取消 run\n"

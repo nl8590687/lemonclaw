@@ -135,6 +135,14 @@ def create_workflow_tools(manager) -> list:
         return f"工作流定义（{len(wfs)}）:\n" + "\n".join(lines)
 
     @tool
+    def workflow_get_spec_detail(workflow_id: str) -> str:
+        """查询指定工作流Spec规格定义详情"""
+        wf = manager.get_workflow(workflow_id)
+        if not wf:
+            return f"(工作流不存在)"
+        return f"工作流规格Spec:\n{json.dumps(wf.spec, ensure_ascii=False)}"
+
+    @tool
     def workflow_inspect_run(run_id: str) -> str:
         """查看一个工作流 run 的详情（状态/中断/输出）。
 
@@ -172,6 +180,6 @@ def create_workflow_tools(manager) -> list:
 
     return [
         workflow_define, workflow_execute, workflow_resume, workflow_cancel,
-        workflow_list, workflow_list_defs, workflow_inspect_run, workflow_inject,
+        workflow_list, workflow_list_defs, workflow_get_spec_detail, workflow_inspect_run, workflow_inject,
         workflow_delete,
     ]
