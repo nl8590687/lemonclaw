@@ -107,6 +107,16 @@ class GlobalConfig(BaseSettings):
     MCP_MAX_TOOLS: int = int(os.environ.get("MCP_MAX_TOOLS", 100))
     MCP_RESULT_MAX_CHARS: int = int(os.environ.get("MCP_RESULT_MAX_CHARS", 20000))
 
+    # 多 Agent 工作流（基于 LangGraph）
+    ENABLE_WORKFLOW: bool = str(os.environ.get("ENABLE_WORKFLOW", "true")).lower() == "true"
+    WORKFLOW_RECURSION_LIMIT: int = int(os.environ.get("WORKFLOW_RECURSION_LIMIT", 50))
+    WORKFLOW_NESTING_MAX: int = int(os.environ.get("WORKFLOW_NESTING_MAX", 5))
+    WORKFLOW_MAX_NODES: int = int(os.environ.get("WORKFLOW_MAX_NODES", 50))
+    WORKFLOW_MAX_BRANCHES: int = int(os.environ.get("WORKFLOW_MAX_BRANCHES", 20))
+    WORKFLOW_RESULT_MAX_CHARS: int = int(os.environ.get("WORKFLOW_RESULT_MAX_CHARS", 20000))
+    WORKFLOW_WORKER_POOL_SIZE: int = int(os.environ.get("WORKFLOW_WORKER_POOL_SIZE", 4))
+    WORKFLOW_HITL_DEFAULT_HANDLER: str = os.environ.get("WORKFLOW_HITL_DEFAULT_HANDLER", "interactive")
+
 
 def load_config() -> GlobalConfig:
     """

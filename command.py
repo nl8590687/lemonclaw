@@ -65,6 +65,12 @@ def _print_help(out_chan: BaseOutChannel):
     table.add_row("/mcp tools <id>", "查看服务端暴露的工具")
     table.add_row("/mcp reload", "重载 mcp.json（对话不中断）")
     table.add_row("")
+    table.add_row("[bold cyan]多 Agent 工作流[/]", "")
+    table.add_row("/wf", "列出工作流定义（/wf help 查看子命令）")
+    table.add_row("/wf runs", "列出运行中/阻塞中的 run")
+    table.add_row("/wf resume <id> <答复>", "续跑暂停的 run")
+    table.add_row("/wf delete <id>", "删除工作流定义（含 run 与 checkpoint）")
+    table.add_row("")
     table.add_row("[bold cyan]定时任务[/]", "")
     table.add_row("/cron", "列出所有定时任务（/cron help 查看子命令）")
     table.add_row("/cron create <表达式> <提示词>", "创建定时任务")
@@ -1015,6 +1021,106 @@ def _handle_mcp(out_chan: BaseOutChannel, agent_service: AgentService, command: 
     return True
 
 
+# ============ 多 Agent 工作流命令 ============
+
+def _handle_wf(out_chan: BaseOutChannel, agent_service: AgentService, command: str) -> bool:
+    """处理 /wf 命令，返回是否继续对话"""
+    parts = command.strip().split()
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+
+    if not agent_service.is_workflow_enabled():
+        out_chan.write_menu_content("[dim]工作流功能未启用（ENABLE_WORKFLOW=false）[/dim]\n")
+        return True
+
+    if subcmd in ("list", "ls", "l"):
+        _wf_list(out_chan, agent_service)
+    elif subcmd in ("runs", "r", "ps"):
+        _wf_runs(out_chan, agent_service, parts)
+    elif subcmd in ("resume", "rs"):
+        _wf_resume(out_chan, agent_service, command)
+    elif subcmd in ("cancel", "c"):
+        _wf_cancel(out_chan, agent_service, parts)
+    elif subcmd in ("delete", "del", "rm"):
+        _wf_delete(out_chan, agent_service, parts)
+    elif subcmd in ("help", "h", "?"):
+        _wf_help(out_chan)
+    else:
+        _wf_help(out_chan)
+    return True
+
+
+def _wf_list(out_chan, agent_service):
+    wfs = agent_service.list_workflows()
+    if not wfs:
+        out_chan.write_menu_content("（无工作流定义）\n")
+        return
+    lines = ["工作流定义：\n"]
+    for w in wfs:
+        err = f" ❌{w.last_error[:30]}" if w.last_error else ""
+        lines.append(f"  {w.workflow_id} | {w.name} | v{w.version} | {'启用' if w.enabled else '禁用'}{err}\n")
+    out_chan.write_menu_content("".join(lines))
+
+
+def _wf_runs(out_chan, agent_service, parts):
+    status = parts[2] if len(parts) > 2 else "active"
+    runs = agent_service.list_workflow_runs(status=status, limit=20)
+    if not runs:
+        out_chan.write_menu_content(f"（无 {status} 状态的 run）\n")
+        return
+    lines = [f"工作流 run（{status}，{len(runs)}）:\n"]
+    for r in runs:
+        line = f"  {r.run_id} | {r.workflow_id} | {r.status}"
+        if r.loop_kind:
+            line += f" | {r.loop_kind}"
+        line += f" | {r.updated_at}\n"
+        lines.append(line)
+    out_chan.write_menu_content("".join(lines))
+
+
+def _wf_resume(out_chan, agent_service, command):
+    parts = command.strip().split(None, 2)
+    if len(parts) < 3:
+        out_chan.write_menu_content("用法: /wf resume <run_id> <答复>\n")
+        return
+    run_id = parts[1]
+    value = parts[2]
+    result = agent_service.resume_workflow_run(run_id, value, {})
+    if "error" in result:
+        out_chan.write_menu_content(f"❌ {result['error']}\n")
+    else:
+        out_chan.write_menu_content(f"✅ run {run_id} 已续跑\n")
+
+
+def _wf_cancel(out_chan, agent_service, parts):
+    run_id = parts[2] if len(parts) > 2 else ""
+    if not run_id:
+        out_chan.write_menu_content("用法: /wf cancel <run_id>\n")
+        return
+    ok, msg = agent_service.cancel_workflow_run(run_id)
+    out_chan.write_menu_content(f"{'✅' if ok else '❌'} {msg}\n")
+
+
+def _wf_delete(out_chan, agent_service, parts):
+    wf_id = parts[2] if len(parts) > 2 else ""
+    if not wf_id:
+        out_chan.write_menu_content("用法: /wf delete <workflow_id>\n")
+        return
+    ok, msg = agent_service.delete_workflow(wf_id)
+    out_chan.write_menu_content(f"{'✅' if ok else '❌'} {msg}\n")
+
+
+def _wf_help(out_chan):
+    out_chan.write_menu_content(
+        "/wf 命令组：\n"
+        "  /wf list            列出工作流定义\n"
+        "  /wf runs [status]   列出 run（active/running/paused/all）\n"
+        "  /wf resume <id> <答复>  续跑暂停的 run\n"
+        "  /wf cancel <id>     取消 run\n"
+        "  /wf delete <id>     删除工作流定义（含全部 run 与 checkpoint）\n"
+        "  /wf help            帮助\n"
+    )
+
+
 def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, command: str) -> bool:
     """处理 / 命令，返回是否继续对话"""
     cmd = command.lower().strip()
@@ -1060,6 +1166,10 @@ def handle_command(out_chan: BaseOutChannel, agent_service: AgentService, comman
     # ============ MCP 接入命令 ============
     if cmd == "/mcp" or cmd.startswith("/mcp "):
         return _handle_mcp(out_chan, agent_service, command)
+
+    # ============ 多 Agent 工作流命令 ============
+    if cmd == "/wf" or cmd.startswith("/wf "):
+        return _handle_wf(out_chan, agent_service, command)
 
     # ============ Cron 定时任务命令 ============
     if cmd == "/cron" or cmd.startswith("/cron "):

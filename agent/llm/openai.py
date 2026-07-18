@@ -31,5 +31,5 @@ def create_openai_llm() -> ChatOpenAI:
         base_url=global_config.OPENAI_BASE_URL,
         api_key=global_config.OPENAI_API_KEY,
         timeout=global_config.LLM_API_TIMEOUT,
-        max_retries=3
+        max_retries=10
     )

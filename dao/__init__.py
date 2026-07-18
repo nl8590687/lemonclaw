@@ -29,6 +29,7 @@ from dao.memory import (
 )
 from dao.skill import Skill, SkillDAO, ensure_schema as ensure_skill_schema
 from dao.mcp_server import MCPServer, MCPServerDAO, ensure_mcp_schema
+from dao.workflow import Workflow, WorkflowRun, WorkflowDAO, ensure_workflow_schema
 
 __all__ = [
     "get_connection",
@@ -54,4 +55,8 @@ __all__ = [
     "MCPServer",
     "MCPServerDAO",
     "ensure_mcp_schema",
+    "Workflow",
+    "WorkflowRun",
+    "WorkflowDAO",
+    "ensure_workflow_schema",
 ]

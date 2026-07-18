@@ -30,6 +30,7 @@ from agent.context_agent import ContextAgent
 from agent.memory import get_memory_manager, MemoryMiddleware
 from agent.skill import get_skill_manager
 from agent.mcp import get_mcp_manager
+from agent.workflow import get_workflow_manager
 from channels.out.stdout import TerminalOutputChannel
 from config import get_global_config
 from dao.memory import CoreMemory
@@ -55,6 +56,8 @@ class AgentService:
         self.skill_manager = get_skill_manager() if config.ENABLE_SKILLS else None
         # 【新增】MCP 接入系统（None 时 create_tool_list 内 create_mcp_tools(None) 返回空列表）
         self.mcp_manager = get_mcp_manager() if config.ENABLE_MCP else None
+        # 【新增】多 Agent 工作流系统
+        self.workflow_manager = get_workflow_manager() if config.ENABLE_WORKFLOW else None
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
         self.checkpointer = MemorySaver()
@@ -353,6 +356,51 @@ class AgentService:
     def reload_mcp(self) -> None:
         """ /mcp reload：全量重载（manager.reload + 重建 agent）。"""
         self.reload_mcp_tools()
+
+    # ============ 多 Agent 工作流委托（供 command.py 调用） ============
+
+    def is_workflow_enabled(self) -> bool:
+        return self.workflow_manager is not None
+
+    def list_workflows(self) -> list:
+        if not self.workflow_manager: return []
+        return self.workflow_manager.list_workflows()
+
+    def get_workflow(self, workflow_id: str):
+        if not self.workflow_manager: return None
+        return self.workflow_manager.get_workflow(workflow_id)
+
+    def define_workflow(self, name, description, spec):
+        if not self.workflow_manager: return None
+        return self.workflow_manager.define_workflow(name, description, spec)
+
+    def start_workflow_run(self, workflow_id, input, context):
+        if not self.workflow_manager: return None, {"error": "工作流功能未启用"}
+        return self.workflow_manager.start_run(workflow_id, input, context)
+
+    def resume_workflow_run(self, run_id, value, context):
+        if not self.workflow_manager: return {"error": "工作流功能未启用"}
+        return self.workflow_manager.resume_run(run_id, value, context)
+
+    def cancel_workflow_run(self, run_id):
+        if not self.workflow_manager: return False, "工作流功能未启用"
+        return self.workflow_manager.cancel_run(run_id)
+
+    def list_workflow_runs(self, workflow_id=None, status=None, limit=50):
+        if not self.workflow_manager: return []
+        return self.workflow_manager.list_runs(workflow_id, status, limit)
+
+    def inspect_workflow_run(self, run_id):
+        if not self.workflow_manager: return None
+        return self.workflow_manager.inspect_run(run_id)
+
+    def inject_workflow_run(self, run_id, message, context):
+        if not self.workflow_manager: return {"error": "工作流功能未启用"}
+        return self.workflow_manager.inject_run(run_id, message, context)
+
+    def delete_workflow(self, workflow_id):
+        if not self.workflow_manager: return False, "工作流功能未启用"
+        return self.workflow_manager.delete_workflow(workflow_id)
 
     def reload_mcp_tools(self) -> None:
         """MCP 全量热重载：manager.reload()（重读 mcp.json + 重连 enabled）+ 重建 agent。

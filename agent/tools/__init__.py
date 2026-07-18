@@ -39,6 +39,8 @@ from config import get_global_config
 from agent.memory import get_memory_manager
 from agent.skill import get_skill_manager
 from agent.mcp import get_mcp_manager
+from agent.workflow.tools import create_workflow_tools
+from agent.workflow import get_workflow_manager
 
 __all__ = [
     "create_bocha_tool",
@@ -107,5 +109,9 @@ def create_tool_list() -> dict[str, Any]:
     # MCP 接入工具（与 AgentService 共享同一个 MCPManager 单例；manager 为 None 时返回空列表）
     if config.ENABLE_MCP:
         tools.extend(create_mcp_tools(get_mcp_manager()))
+
+    # 多 Agent 工作流工具（与 AgentService 共享同一个 WorkflowManager 单例）
+    if config.ENABLE_WORKFLOW:
+        tools.extend(create_workflow_tools(get_workflow_manager()))
 
     return tools

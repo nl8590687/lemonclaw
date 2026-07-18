@@ -78,6 +78,12 @@ def get_output_channel(event_msg: EventMessage) -> BaseOutChannel:
         return TerminalOutputChannel()
     if config.ENABLE_FEISHU and event_type.value == EventType.LARK_MESSAGE.value:
         return FeishuOutputChannel()
+    if event_type.value == EventType.LANGGRAPH_LOOP.value:
+        # LangGraphLoop 事件：按 origin context 路由（飞书触发 -> 飞书；否则终端）
+        ctx = event_msg.context or {}
+        if config.ENABLE_FEISHU and ctx.get("channel") == "feishu":
+            return FeishuOutputChannel()
+        return TerminalOutputChannel()
     return TerminalOutputChannel()
 
 
