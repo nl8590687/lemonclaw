@@ -20,6 +20,7 @@ LemonClaw 是一个开源的通用 AI Agent 框架，能把任意大模型变成
 - 🧠 **持久化记忆** —— 基于 TF-IDF 的长期记忆块检索 + 会话自动归档，让上下文跨会话保留。
 - 🧩 **技能系统** -- 按需加载的技能包（`SKILL.md`），支持热加载、LRU 活跃集注入、敏感参数门禁与可选脚本执行。
 - 🔌 **MCP 接入** -- 通过 Streamable HTTP 接入外部 MCP 服务端；每个远程工具注册为原生 Agent 工具（`mcp__<服务名>__<工具名>`），在 `.lemonclaw/mcp.json` 声明，支持热重载且不中断当前对话。
+- 🔀 **多 Agent 工作流** -- 构建并运行基于 LangGraph 的多 Agent 工作流；声明式 JSON spec、子 Agent、人在回路（HITL）、动态路由、跨重启续跑。
 - 🔌 **OpenAI 兼容** —— 支持任意 OpenAI 兼容接口（DeepSeek、OpenAI、本地服务……）。
 - ⏰ **内置调度** —— 运行时创建与管理定时任务，Agent 可自行安排后续动作。
 - 🐳 **一键 Docker 部署** —— 镜像支持时区配置，挂载配置目录即可运行。
@@ -139,6 +140,7 @@ docker run -e TZ=Asia/Shanghai \
 | `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
+| `ENABLE_WORKFLOW` / `WORKFLOW_*` | 多 Agent 工作流：总开关、递归上限、嵌套上限、节点/分支上限、结果截断、Worker 池大小、HITL handler |
 
 ---
 
@@ -175,6 +177,7 @@ LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出�
 | `load_skill` / `unload_skill` | 激活 / 卸载技能（指令由中间件注入） | 可选（需 `ENABLE_SKILLS=true`） |
 | `run_skill_script` | 在技能隔离环境执行 Python/Node 脚本 | 可选（需 `ENABLE_SKILL_SCRIPT=true`） |
 | `mcp__<服务名>__<工具名>` | 已连接 MCP 服务端暴露的工具（Streamable HTTP） | 可选（需 `ENABLE_MCP=true` + `.lemonclaw/mcp.json`） |
+| `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | 定义、运行、续跑、管理多 Agent 工作流 | 可选（需 `ENABLE_WORKFLOW=true`） |
 
 > 可扩展：在 `agent/tools/` 下新增工具，并在 `create_tool_list()` 中注册即可。
 
@@ -292,6 +295,49 @@ metadata:
 
 ---
 
+## 🔀 多 Agent 工作流
+
+当 `ENABLE_WORKFLOW=true`（默认）时，LemonClaw 可构建并运行**基于 LangGraph 的多 Agent 工作流**。架构中设计了**两个"在回路中"的参与者**：**主 Agent** 和**人**。主 Agent 不仅是定义工作流的编排者——它**自身也是回路中的积极参与者**：可作为节点在流程执行中被回调（`main_agent` 节点）、随时监督检查和控制调整在途 run（监督命令）、同时作为人介入工作流的唯一界面（HITL 经主 Agent 通知与恢复）。这与简单的"工作流结果回调"有本质区别——**主 Agent 是工作流回路中的一等公民，而非被动终端**。**`loop_forever` 不做任何改动**——工作流与 LangGraphLoop 事件通过既有消息总线与 Agent 工具接入。
+
+### 核心能力
+
+- **主 Agent 在回路** vs. **人在回路** — 两个独立的"回路参与者"：
+  - **主 Agent 在回路**：主 Agent 是回路中的积极参与者。它可作为 `main_agent` 节点在流程执行中被回调（带完整会话记忆与工作流工具，实现动态递归）；也可**随时监督检查和控制调整**在途 run——不限于预定义回调点——通过监督命令（`/wf inspect`、`/wf inject`）与工具（`workflow_inspect_run`、`workflow_inject`）。这是"主 Agent 在回路中"，区别于被动的结果投递。
+  - **人在回路**：`human` 节点暂停执行，**通过主 Agent** 通知用户（主 Agent 是人介入工作流的唯一界面——人不与子 Agent 直接交互，不"越级"）。`run_id` 在消息文本中双向携带；主 Agent 提取后调 `workflow_resume(run_id, 答复)` 续跑。
+- **声明式 spec** — 通过单次 `workflow_define(name, spec)` 调用定义工作流（JSON：`state_schema` / `nodes` / `edges` / `conditionals`），无需代码生成。
+- **子 Agent**（`subagent` 节点）— 裁剪的工具集 + 自定义系统提示，不继承主 Agent 配置。`BaseSubAgent` + `GeneralSubAgent` 体系 + 可插拔注册表，后续可接入专用 SubAgent（浏览器操作、SSH 等）。
+- **超越 DAG** — 条件边支持 LLM 路由与状态字段路由，同时支持回环（`recursion_limit` 保护）。
+- **持久化执行** — run 通过 `SqliteSaver` checkpoint 到唯一 `.lemonclaw/lemonclaw.db`。暂停的 run 跨进程重启仍可续跑（数小时/数天后）。
+- **后台 Worker 池** — 工作流分段在有界线程池中执行（`WORKFLOW_WORKER_POOL_SIZE`，默认 4），主 Agent 循环永不阻塞。
+- **一次性工作流** — spec 中标记 `"one_shot": true`，run 完成/出错后自动删除定义、全部 run 与 checkpoint。
+
+### 三步构建与运行
+
+**1. 定义** — 主 Agent 调 `workflow_define`，给出 JSON spec：
+
+```json
+{
+  "state_schema": [{"name": "answer", "type": "str"}],
+  "nodes": [
+    {"name": "ask", "kind": "human", "config": {"question": "请确认搜索范围。", "output_field": "answer"}},
+    {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "你是一个摘要员。", "tools": ["web_search"], "task": "总结：{answer}", "output_field": "summary"}}
+  ],
+  "edges": [{"src": "START", "dst": "ask"}, {"src": "ask", "dst": "summarize"}, {"src": "summarize", "dst": "END"}]
+}
+```
+
+**2. 执行** — 主 Agent 调 `workflow_execute("workflow_id")`。工作流在后台 Worker 线程中执行；遇 `human` 节点暂停，发 `LangGraphLoop` 消息给主 Agent（经既有消息总线——无特殊分发）。
+
+**3. 续跑（HITL）** — 用户在消息文本中带上 `run_id` 答复（如 `wf_run_xxx 同意，限近一周`）。主 Agent 提取 `run_id`，调 `workflow_resume(run_id, 答复)` 续跑。
+
+### 运行时管理
+
+`/wf` 命令（输入 `/wf help` 查看完整列表）：`list`、`runs [status]`（active/running/paused/all）、`resume <id> <value>`、`cancel <id>`、`delete <id>`。主 Agent 也拥有 `workflow_list`（查运行/阻塞中的 run）、`workflow_inspect_run`、`workflow_inject` 工具。
+
+> `python` 节点与沙箱机制**本期未实现**；待沙箱选型完成后与 skill 脚本系统统一支持。
+
+---
+
 ## 💬 斜杠命令
 
 在任意对话中可用（输入 `/help` 查看完整列表）：
@@ -308,6 +354,7 @@ metadata:
 | `/cron` | 列出并管理定时任务（`/cron help` 查看子命令） |
 | `/skills` | 列出并管理技能（`/skills help` 查看子命令：list/show/enable/disable/unload/setup/reload） |
 | `/mcp` | 列出并管理 MCP 服务端（`/mcp help` 查看子命令：list/add/remove/enable/disable/tools/reconnect/reload/call） |
+| `/wf` | 列出并管理工作流（`/wf help` 查看子命令：list/runs/resume/cancel/delete） |
 | `/exit` `/quit` `/q` | 退出 |
 
 ---

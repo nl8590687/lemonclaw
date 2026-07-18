@@ -20,6 +20,7 @@ LemonClaw is an open-source, general-purpose AI agent framework that turns any L
 - 🧠 **Persistent memory** — TF-IDF retrieval over long-term memory chunks plus automatic session archival, so context survives across sessions.
 - 🧩 **Skills** — on-demand skill packages (`SKILL.md`) with hot-reload, LRU active-set injection, sensitive-param gating, and optional script execution.
 - 🔌 **MCP integration** - connect external MCP servers over Streamable HTTP; each remote tool becomes a first-class agent tool (`mcp__<server>__<tool>`), declared in `.lemonclaw/mcp.json` and hot-reloadable without losing the conversation.
+- 🔀 **Multi-Agent Workflow** — build and run LangGraph-based multi-agent workflows with declarative JSON specs; sub-agents, human-in-the-loop (HITL), dynamic routing, and cross-restart resumption via persistent checkpointing.
 - 🔌 **OpenAI-compatible** — works with any OpenAI-compatible API (DeepSeek, OpenAI, local servers, …).
 - ⏰ **Built-in scheduling** — create and manage cron tasks at runtime; the agent can schedule its own follow-ups.
 - 🐳 **One-command Docker deploy** — timezone-aware image, just mount the config dir.
@@ -139,6 +140,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
+| `ENABLE_WORKFLOW` / `WORKFLOW_*` | Multi-Agent Workflow: master switch, recursion limit, nesting max, node/branch limits, result truncation, worker pool size, HITL handler |
 
 ---
 
@@ -175,6 +177,7 @@ LemonClaw receives events through pluggable input channels and replies through m
 | `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
 | `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |
 | `mcp__<server>__<tool>` | Tools from connected MCP servers (Streamable HTTP) | optional (needs `ENABLE_MCP=true` + `.lemonclaw/mcp.json`) |
+| `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | Define, run, resume, manage multi-agent workflows | optional (needs `ENABLE_WORKFLOW=true`) |
 
 > Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
 
@@ -292,6 +295,49 @@ A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, saf
 
 ---
 
+## 🔀 Multi-Agent Workflow
+
+When `ENABLE_WORKFLOW=true` (default), LemonClaw can build and run **LangGraph-based multi-agent workflows**. The architecture features **two "in-the-loop" participants**: the **main agent** and the **human**. The main agent is not just the orchestrator who defines workflows — it is an **active participant in the loop itself**: it can be called back as a node during execution (`main_agent` nodes), inspect and control in-flight runs at any time (supervisor commands), and serve as the sole interface through which humans interact with the workflow (HITL). This is fundamentally different from a simple "workflow result callback" — **the main agent is a first-class citizen of the workflow loop, not a passive endpoint**. **`loop_forever` is never modified** — workflows and the LangGraphLoop events integrate via the existing message bus and agent tools.
+
+### Key capabilities
+
+- **Main agent in the loop** vs. **Human in the loop** — two independent "loop participants":
+  - **Main agent in the loop**: the main agent is an active participant. It can be called back as a `main_agent` node during execution (with full session memory and workflow tools, enabling dynamic recursion). It can also **inspect, control, and adjust** in-flight runs **at any time** — not just at predefined callback points — via supervisor commands (`/wf inspect`, `/wf inject`) and tools (`workflow_inspect_run`, `workflow_inject`). This is the "main-agent-in-the-loop", distinct from passive result delivery.
+  - **Human in the loop**: `human` nodes pause execution and notify the user **through the main agent** (the main agent is the human's sole interface — humans never interact with sub-agents directly). The `run_id` is carried in the message text bidirectionally; the main agent extracts it and calls `workflow_resume(run_id, answer)`.
+- **Declarative specs** — define workflows via a single `workflow_define(name, spec)` call (JSON: `state_schema` / `nodes` / `edges` / `conditionals`). No code generation required.
+- **Sub-agents** (`subagent` nodes) — curated tools + custom system prompt, inherits nothing from the main agent. A `BaseSubAgent` + `GeneralSubAgent` hierarchy with a pluggable registry for future specialized types (browser, SSH, etc.).
+- **Beyond DAG** — conditional edges support LLM-based and state-field routing, plus cyclic loops (with `recursion_limit` protection).
+- **Persistent execution** — runs are checkpointed via `SqliteSaver` in the single `.lemonclaw/lemonclaw.db`. Paused runs survive process restarts and can be resumed hours/days later.
+- **Background worker pool** — workflow segments execute in a bounded thread pool (`WORKFLOW_WORKER_POOL_SIZE`, default 4) so the main agent loop never blocks.
+- **One-shot workflows** — mark `"one_shot": true` in the spec and the definition, runs, and checkpoints are auto-cleaned on completion.
+
+### Define and run in 3 steps
+
+**1. Define** — the main agent calls `workflow_define` with a JSON spec:
+
+```json
+{
+  "state_schema": [{"name": "answer", "type": "str"}],
+  "nodes": [
+    {"name": "ask", "kind": "human", "config": {"question": "Please confirm the scope.", "output_field": "answer"}},
+    {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "You are a summarizer.", "tools": ["web_search"], "task": "Summarize: {answer}", "output_field": "summary"}}
+  ],
+  "edges": [{"src": "START", "dst": "ask"}, {"src": "ask", "dst": "summarize"}, {"src": "summarize", "dst": "END"}]
+}
+```
+
+**2. Execute** — the main agent calls `workflow_execute("workflow_id")`. The workflow runs in a background worker thread; on a `human` node it pauses and sends a `LangGraphLoop` message to the main agent (via the normal message bus — no special dispatch).
+
+**3. Resume (HITL)** — the user replies with the `run_id` in the text (e.g. `wf_run_xxx agreed, limit to one week`). The main agent extracts the `run_id` and calls `workflow_resume(run_id, answer)` to continue.
+
+### Manage at runtime
+
+`/wf` commands (type `/wf help` for the full list): `list`, `runs [status]` (active/running/paused/all), `resume <id> <value>`, `cancel <id>`, `delete <id>`. The main agent also has `workflow_list` (list active/paused runs), `workflow_inspect_run`, and `workflow_inject` tools.
+
+> `python` nodes and the sandbox mechanism are **not implemented** in this release; they will be added later under a shared sandbox with the skill script system.
+
+---
+
 ## 💬 Slash Commands
 
 Available inside any conversation (type `/help` for the full list):
@@ -308,6 +354,7 @@ Available inside any conversation (type `/help` for the full list):
 | `/cron` | List and manage scheduled tasks (`/cron help` for subcommands) |
 | `/skills` | List and manage skills (`/skills help` for subcommands: list/show/enable/disable/unload/setup/reload) |
 | `/mcp` | List and manage MCP servers (`/mcp help` for subcommands: list/add/remove/enable/disable/tools/reconnect/reload/call) |
+| `/wf` | List and manage workflows (`/wf help` for subcommands: list/runs/resume/cancel/delete) |
 | `/exit` `/quit` `/q` | Exit |
 
 ---
