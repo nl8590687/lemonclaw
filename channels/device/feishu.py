@@ -73,16 +73,16 @@ def md_to_lark_post(md_text: str) -> str:
     """
     把 Markdown 文本转成飞书 Post 富文本格式。
 
-    飞书的 Post 不支持完整 Markdown，这里逐行转成 ``md`` 标签，
-    在大部分客户端能正确渲染。
+    飞书 Post 支持 ``md`` 标签直接渲染 Markdown，这里将整段 Markdown
+    放入单个 ``md`` 标签，确保代码块、表格、列表等多行语法正确渲染。
 
     :param md_text: Markdown 文本
     :return: 飞书 Post JSON 字符串
     """
     return json.dumps({
-        "zh-cn": {
+        "zh_cn": {
             "content": [
-                [{"tag": "md", "text": line} for line in md_text.splitlines()]
+                [{"tag": "md", "text": md_text}]
             ]
         }
     }, ensure_ascii=False)
