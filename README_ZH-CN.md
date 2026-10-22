@@ -151,7 +151,7 @@ docker run -e TZ=Asia/Shanghai \
 | `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | 工具安全：Shell 工具开关、文件访问白名单 |
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent 行为：ReAct 最大迭代次数、保留消息数 |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook 服务：主机/端口、鉴权 Token、频率限制 |
-| `ENABLE_FEISHU` / `FEISHU_*` | 飞书/Lark 应用凭证 |
+| `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书/Lark 应用凭证 |
 | `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
@@ -161,13 +161,13 @@ docker run -e TZ=Asia/Shanghai \
 
 ## 📡 通道
 
-LemonClaw 通过可插拔的输入通道接收事件，并通过对应的输出通道回复。所有通道都发布到同一条消息总线，由 Agent 循环消费。
+LemonClaw 通过可插拔的输入通道接收事件，并把回复广播给所有启用的输出通道。所有通道都发布到同一条消息总线，由 Agent 循环消费。终端始终输出；开启飞书后，终端与飞书会同时收到回复。
 
 | 通道 | 方向 | 说明 |
 |------|------|------|
 | **终端** | 输入/输出 | 始终开启。交互式 stdin + rich 终端输出。 |
 | **Webhook** | 输入 | HTTP 服务（默认 `127.0.0.1:8765`）。可选 `X-Auth-Token` 鉴权与每分钟限频。`ENABLE_WEBHOOK=true` 开启。 |
-| **飞书/Lark** | 输入/输出 | 机器人消息。需 `ENABLE_FEISHU=true` 加上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在飞书开发者后台配置事件订阅。 |
+| **飞书/Lark** | 输入/输出 | 机器人消息。需 `ENABLE_FEISHU=true` 加上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在飞书开发者后台配置事件订阅。个人专用模式下，首个向机器人发消息的飞书用户会被自动绑定（持久化在 `lemonclaw.db`），其他飞书用户的消息会被忽略；所有飞书输出固定回复给该绑定用户，同时终端始终输出。 |
 | **Cron** | 输入 | 定时任务。始终开启；任务可在运行时通过 `/cron` 命令或 cron 工具管理。 |
 
 ---

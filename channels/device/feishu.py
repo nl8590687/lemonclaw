@@ -36,6 +36,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from config import get_global_config
+from dao import get_or_set_state, get_state
 
 
 # ---- lark_oapi 是可选依赖 ----
@@ -211,6 +212,20 @@ class FeishuClient:
             message = event.message
 
             user_open_id = sender.sender_id.open_id
+            owner_open_id: str | None = None
+            try:
+                owner_open_id = bind_feishu_owner_open_id(user_open_id)
+            except Exception as e:
+                # 绑定失败不应影响本次消息处理，输出侧仍会用 context 中的 open_id
+                if lark:
+                    lark.logger.error(f"绑定飞书用户 open_id 失败: {e}")
+
+            if not is_feishu_owner(user_open_id, owner_open_id):
+                # 个人专用：只处理首个绑定用户的消息，其他用户直接忽略
+                if lark:
+                    lark.logger.warning(f"忽略非绑定飞书用户的消息: {user_open_id}")
+                return
+
             message_type = message.message_type
             message_content = message.content
 
@@ -304,6 +319,7 @@ class FeishuClient:
 
 _feishu_client: FeishuClient | None = None
 _feishu_lock = threading.Lock()
+_OWNER_OPEN_ID_KEY = "feishu.owner_open_id"
 
 
 def get_feishu_client() -> FeishuClient | None:
@@ -316,3 +332,24 @@ def set_feishu_client(client: FeishuClient) -> None:
     global _feishu_client
     with _feishu_lock:
         _feishu_client = client
+
+
+def get_feishu_owner_open_id() -> str | None:
+    """获取自动绑定的飞书用户 open_id（首个向机器人发消息的用户）"""
+    return get_state(_OWNER_OPEN_ID_KEY)
+
+
+def bind_feishu_owner_open_id(open_id: str | None) -> str | None:
+    """绑定首个向机器人发消息的飞书用户；已绑定时保持不变"""
+    if not open_id:
+        return get_feishu_owner_open_id()
+    return get_or_set_state(_OWNER_OPEN_ID_KEY, open_id)
+
+
+def is_feishu_owner(open_id: str | None, owner_open_id: str | None = None) -> bool:
+    """判断是否为自动绑定的飞书用户；尚未绑定时允许通过"""
+    if not open_id:
+        return False
+    if owner_open_id is None:
+        owner_open_id = get_feishu_owner_open_id()
+    return owner_open_id is None or owner_open_id == open_id

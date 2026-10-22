@@ -151,7 +151,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | Tool safety: shell tool on/off, file-access whitelist |
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent behavior: max ReAct iterations, retained message count |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook server: host/port, auth token, rate limit |
-| `ENABLE_FEISHU` / `FEISHU_*` | Feishu/Lark app credentials |
+| `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu/Lark app credentials |
 | `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
@@ -161,13 +161,13 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 
 ## 📡 Channels
 
-LemonClaw receives events through pluggable input channels and replies through matching output channels. All channels publish to a single message bus consumed by the agent loop.
+LemonClaw receives events through pluggable input channels and broadcasts replies to every enabled output channel. All channels publish to a single message bus consumed by the agent loop. The terminal is always enabled; when Feishu is enabled, replies go to both the terminal and Feishu.
 
 | Channel | Direction | Notes |
 |---------|-----------|-------|
 | **Terminal** | in/out | Always on. Interactive stdin + rich terminal output. |
 | **Webhook** | in | HTTP server (default `127.0.0.1:8765`). Optional `X-Auth-Token` auth and per-minute rate limit. Enable with `ENABLE_WEBHOOK=true`. |
-| **Feishu/Lark** | in/out | Bot messaging. Requires `ENABLE_FEISHU=true` plus `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and event subscription configured in the Feishu developer console. |
+| **Feishu/Lark** | in/out | Bot messaging. Requires `ENABLE_FEISHU=true` plus `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and event subscription configured in the Feishu developer console. In personal mode, the first Feishu user who messages the bot is bound automatically and persisted in `lemonclaw.db`; messages from other Feishu users are ignored, and all Feishu output goes to the bound user while the terminal always keeps outputting. |
 | **Cron** | in | Scheduled tasks. Always on; tasks are managed at runtime via the `/cron` command or the cron tool. |
 
 ---

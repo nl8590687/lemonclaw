@@ -15,3 +15,5 @@
 from channels.out.base import BaseOutChannel
 from channels.out.stdout import TerminalOutputChannel
 from channels.out.feishu import FeishuOutputChannel
+from channels.out.fanout import FanoutOutputChannel
+from channels.out.factory import build_output_channel, build_output_channels

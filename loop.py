@@ -16,13 +16,12 @@
 """
 Loop forever
 """
-from langchain_core.messages import AIMessage
 from rich.text import Text
 
 from agent.agent import AgentService
 from channels.bus import get_bus, EventMessage, EventType
 from channels.ins import TerminalInput, WebhookInput, FeishuInput, CrontabInput
-from channels.out import BaseOutChannel, TerminalOutputChannel, FeishuOutputChannel
+from channels.out import BaseOutChannel, build_output_channel
 from command import handle_command
 from config import get_global_config
 
@@ -56,41 +55,17 @@ def stop_event_source():
         event_source.stop()
 
 
-def handle_response(out_chan: BaseOutChannel, event_msg: EventMessage, response_text: dict[str, object]):
-    msg_list = response_text.get("messages", [])
-    rsp_msg = msg_list[-1] if msg_list and isinstance(msg_list[-1], AIMessage) else None
-    rsp_content = rsp_msg.content if rsp_msg else ""
-    if not rsp_content:
-        return
-
-    if event_msg.event_type.value == EventType.LARK_MESSAGE.value:
-        out_chan.write_message(rsp_content, event_msg.context)
-
-
-def get_output_channel(event_msg: EventMessage) -> BaseOutChannel:
-    config = get_global_config()
-    event_type = event_msg.event_type
-    if event_type.value == EventType.TERMINAL.value:
-        return TerminalOutputChannel()
-    if config.ENABLE_WEBHOOK and event_type.value == EventType.WEBHOOK.value:
-        return TerminalOutputChannel()
-    if event_type.value == EventType.SCHEDULED_TASK.value:
-        return TerminalOutputChannel()
-    if config.ENABLE_FEISHU and event_type.value == EventType.LARK_MESSAGE.value:
-        return FeishuOutputChannel()
-    if event_type.value == EventType.LANGGRAPH_LOOP.value:
-        # LangGraphLoop 事件：按 origin context 路由（飞书触发 -> 飞书；否则终端）
-        ctx = event_msg.context or {}
-        if config.ENABLE_FEISHU and ctx.get("channel") == "feishu":
-            return FeishuOutputChannel()
-        return TerminalOutputChannel()
-    return TerminalOutputChannel()
+def get_output_channel(event_msg: EventMessage | None = None) -> BaseOutChannel:
+    """返回聚合输出通道：终端始终输出，飞书启用时同时输出。"""
+    context = event_msg.context if event_msg is not None else None
+    return build_output_channel(context)
 
 
 def loop_forever():
     svr = AgentService()
     msg_bus = get_bus()
     while True:
+        out_chan = svr.default_out_chan
         try:
             event_msg: EventMessage = msg_bus.poll()
             if not event_msg:
@@ -102,18 +77,18 @@ def loop_forever():
                 continue
 
             out_chan = get_output_channel(event_msg)
+            is_terminal_event = event_msg.event_type.value == EventType.TERMINAL.value
             if msg_text.strip().startswith("/"):
-                if not handle_command(out_chan, agent_service=svr, command=msg_text) and isinstance(out_chan, TerminalOutputChannel):
+                if not handle_command(out_chan, agent_service=svr, command=msg_text) and is_terminal_event:
                     break
             else:
                 context = event_msg.context
-                res = svr.run(msg_text.strip(), context)
-                handle_response(out_chan, event_msg, res)
+                svr.run(msg_text.strip(), context, out_chan)
             svr.trim_msg_history()
         except KeyboardInterrupt:
             break
         except Exception as ex:
-            svr.default_out_chan.write_system_error(f"error: {ex}")
+            out_chan.write_system_error(f"error: {ex}")
 
     stop_event_source()
     # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）

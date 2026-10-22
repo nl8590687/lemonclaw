@@ -31,7 +31,7 @@ from agent.memory import get_memory_manager, MemoryMiddleware
 from agent.skill import get_skill_manager
 from agent.mcp import get_mcp_manager
 from agent.workflow import get_workflow_manager
-from channels.out.stdout import TerminalOutputChannel
+from channels.out import BaseOutChannel, build_output_channel
 from config import get_global_config
 from dao.memory import CoreMemory
 
@@ -70,7 +70,7 @@ class AgentService:
         self.min_full_messages = config.CONTEXT_MIN_FULL_MESSAGES
         self.model_context_length = config.MODEL_CONTEXT_LENGTH
         self.model_max_tokens = config.MODEL_MAX_COMPLETION_TOKEN
-        self.default_out_chan = TerminalOutputChannel()
+        self.default_out_chan = build_output_channel()
         self.stats = {
             "context_tokens": {
                 "total_prompt_tokens": 0,
@@ -91,11 +91,12 @@ class AgentService:
         tools = create_tool_list()
         return tools
 
-    def run(self, input_msg: str, context: dict):
+    def run(self, input_msg: str, context: dict, out_chan: BaseOutChannel | None = None):
         """
         执行一次用户查询，返回最终状态
         """
-        callback = StreamingCallback(self.default_out_chan)
+        out_chan = out_chan or self.default_out_chan
+        callback = StreamingCallback(out_chan)
         result = self.agent.invoke(
             {
                 "messages": [HumanMessage(content=input_msg)]},
@@ -109,7 +110,7 @@ class AgentService:
         context["tokens"] = callback.tokens
         context["context_tokens"] = self.stats.get("context_tokens", {})
         context["messages"] = self.stats.get("context_messages", {})
-        self.default_out_chan.write_message(result.get("messages", [])[-1].content, context)
+        out_chan.write_message(result.get("messages", [])[-1].content, context)
         if self.memory:
             self.memory.on_messages(result.get("messages", []))
         return result
