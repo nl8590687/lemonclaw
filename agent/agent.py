@@ -22,6 +22,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
@@ -97,20 +98,33 @@ class AgentService:
         """
         out_chan = out_chan or self.default_out_chan
         callback = StreamingCallback(out_chan)
-        result = self.agent.invoke(
-            {
-                "messages": [HumanMessage(content=input_msg)]},
-            config = {
-                "configurable": {"thread_id": self.session_id},
-                "callbacks": [callback],
-                "recursion_limit": self.max_iterations * 2,
-            }
-        )
+        try:
+            result = self.agent.invoke(
+                {
+                    "messages": [HumanMessage(content=input_msg)]},
+                config = {
+                    "configurable": {"thread_id": self.session_id},
+                    "callbacks": [callback],
+                    "recursion_limit": self.max_iterations * 2,
+                }
+            )
+        except GraphRecursionError:
+            out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
+            return None
         self._update_stats(callback)
         context["tokens"] = callback.tokens
         context["context_tokens"] = self.stats.get("context_tokens", {})
         context["messages"] = self.stats.get("context_messages", {})
-        out_chan.write_message(result.get("messages", [])[-1].content, context)
+        messages = result.get("messages", [])
+        final_message = messages[-1] if messages else None
+        final_content = final_message.content if isinstance(final_message, AIMessage) else ""
+        if isinstance(final_content, str) and final_content.strip():
+            out_chan.write_message(final_content, context)
+        else:
+            metadata = getattr(final_message, "response_metadata", None) or {}
+            reason = metadata.get("finish_reason")
+            detail = f"（finish_reason={reason}）" if reason else ""
+            out_chan.write_system_error(f"模型本轮未返回内容{detail}，请重试。")
         if self.memory:
             self.memory.on_messages(result.get("messages", []))
         return result

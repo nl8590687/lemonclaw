@@ -27,8 +27,9 @@ from channels.bus.enum import EventType, EventPriority
 from channels.bus.event import EventMessage
 
 
-class MsgBusCapacityException(BaseException):
+class MsgBusCapacityException(Exception):
     def __init__(self, msg: str):
+        super().__init__(msg)
         self.msg = msg
 
 
@@ -60,18 +61,17 @@ class MessageBus:
         :param priority: 优先级
         :return: 事件ID
         """
-        if self._queue.qsize() >= self.capacity:
-            raise MsgBusCapacityException(f"Messages in message bus exceeded capacity {self.capacity}")
-
-        msg = EventMessage(
-            priority=priority,
-            event_type=event_type,
-            content=content,
-            context=context or {},
-        )
-
         with self._lock:
-            self._queue.put(msg)
+            if self._queue.qsize() >= self.capacity:
+                raise MsgBusCapacityException(f"Messages in message bus exceeded capacity {self.capacity}")
+
+            msg = EventMessage(
+                priority=priority,
+                event_type=event_type,
+                content=content,
+                context=context or {},
+            )
+            self._queue.put_nowait(msg)
             self._condition.notify_all()
 
         return msg.event_id

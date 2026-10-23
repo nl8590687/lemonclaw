@@ -18,10 +18,16 @@ Event Bus Message
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import count
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
 from channels.bus.enum import EventType, EventPriority
+
+
+_message_sequence = count()
+_message_sequence_lock = Lock()
 
 
 @dataclass(order=True)
@@ -29,13 +35,17 @@ class EventMessage:
     """
     事件消息数据类
     """
-    priority: EventPriority
-    timestamp: datetime = field(init=False, compare=True)
+    priority: EventPriority = field(compare=False)
+    timestamp: datetime = field(init=False, compare=False)
     event_id: str = field(init=False, compare=False)
     event_type: EventType = field(compare=False)
     content: dict[str, Any] = field(compare=False)
     context: dict[str, Any] = field(default_factory=dict, compare=False)
+    _sort_key: tuple[int, int] = field(init=False, compare=True, repr=False)
 
     def __post_init__(self):
         self.timestamp = datetime.now()
         self.event_id = str(uuid4())
+        with _message_sequence_lock:
+            sequence = next(_message_sequence)
+        self._sort_key = (-int(self.priority), sequence)
