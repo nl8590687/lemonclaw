@@ -52,6 +52,7 @@ if not _logger.handlers:
 # 触发回调签名（与 webhook 的 _write_message 保持兼容）：
 #   (text, img_urls, context) -> event_id
 TriggerCallback = Callable[[str, Optional[list[str]], dict[str, object]], str]
+MarkRunCallback = Callable[[str], None]
 
 
 # =====================================================================
@@ -71,28 +72,41 @@ CRON_PRESETS: dict[str, str] = {
 
 
 def _parse_cron_field(field: str, min_val: int, max_val: int) -> set[int]:
-    """解析单个 cron 字段，支持 ``*``、``a,b``、``a-b``、``*/n``、``a/n``"""
+    """解析单个 cron 字段，支持 ``*``、``a,b``、``a-b``、``*/n``、``a/n``、``a-b/n``"""
     if field == "*":
         return set(range(min_val, max_val + 1))
+
+    def _check(value: int) -> int:
+        if not min_val <= value <= max_val:
+            raise ValueError(f"value {value} out of range [{min_val}, {max_val}]")
+        return value
 
     result: set[int] = set()
     for part in field.split(","):
         part = part.strip()
         if not part:
-            continue
-        if "-" in part:
-            start_s, end_s = part.split("-", 1)
-            start = int(start_s.strip())
-            end = int(end_s.strip())
-            result.update(range(start, end + 1))
-        elif "/" in part:
-            base, step_s = part.split("/", 1)
+            raise ValueError(f"invalid cron field: {field!r}")
+
+        base, _, step_s = part.partition("/")
+        step = 1
+        has_step = bool(step_s)
+        if step_s:
             step = int(step_s.strip())
-            start = min_val if base == "*" else int(base.strip())
-            for i in range(start, max_val + 1, step):
-                result.add(i)
+            if step <= 0:
+                raise ValueError(f"invalid step: {step_s!r}")
+
+        if base == "*":
+            start, end = min_val, max_val
+        elif "-" in base:
+            start_s, end_s = base.split("-", 1)
+            start, end = _check(int(start_s.strip())), _check(int(end_s.strip()))
+            if start > end:
+                raise ValueError(f"invalid range: {base!r}")
         else:
-            result.add(int(part.strip()))
+            start = _check(int(base.strip()))
+            end = max_val if has_step else start
+
+        result.update(range(start, end + 1, step))
 
     return result
 
@@ -108,7 +122,7 @@ class CronExpression:
         self.expression = expression.strip()
         parts = self.expression.split()
 
-        if len(parts) < 5:
+        if len(parts) != 5:
             raise ValueError(f"Invalid CRON expression: expecting 5 fields, got {len(parts)}: {expression!r}")
 
         self.minute = _parse_cron_field(parts[0], 0, 59)
@@ -116,7 +130,11 @@ class CronExpression:
         self.day = _parse_cron_field(parts[2], 1, 31)
         self.month = _parse_cron_field(parts[3], 1, 12)
         # 0=周日
-        self.weekday = _parse_cron_field(parts[4], 0, 6)
+        self.day_star = parts[2] == "*"
+        self.weekday_star = parts[4] == "*"
+        # 0=Sunday; 7 is also accepted as Sunday (standard crontab)
+        weekday = _parse_cron_field(parts[4], 0, 7)
+        self.weekday = {0 if value == 7 else value for value in weekday}
 
     def matches(self, dt: datetime) -> bool:
         """检查 dt 是否匹配本表达式"""
@@ -127,10 +145,14 @@ class CronExpression:
         if dt.month not in self.month:
             return False
 
-        # 标准 cron 中"日"和"周"是"或"关系
+        # 标准 crontab：日/周都受限时取"或"，否则只按受限字段匹配
         day_match = dt.day in self.day
         # isoweekday: 1=周一 ... 7=周日；映射为 0=周日，1=周一，...，6=周六
         weekday_match = (dt.isoweekday() % 7) in self.weekday
+        # Standard crontab: use the single restricted date field when the
+        # other one is '*', and OR them only when both are restricted.
+        if self.day_star or self.weekday_star:
+            return weekday_match if self.day_star else day_match
         return day_match or weekday_match
 
     def next_run(self, from_dt: Optional[datetime] = None) -> datetime:
@@ -175,13 +197,15 @@ class CronScheduler:
     由上层（``CrontabInput``）决定如何投递到消息总线。
     """
 
-    def __init__(self, on_trigger: Optional[TriggerCallback] = None):
+    def __init__(self, on_trigger: Optional[TriggerCallback] = None,
+                 on_fired: Optional[MarkRunCallback] = None):
         self._tasks: dict[str, tuple[CronTask, CronExpression]] = {}
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._on_trigger: Optional[TriggerCallback] = on_trigger
+        self._on_fired: Optional[MarkRunCallback] = on_fired
         # 防止同一分钟重复触发的标记，记录上次检查的"分钟"
         self._last_minute_key: str | None = None
 
@@ -288,6 +312,14 @@ class CronScheduler:
             _logger.info(
                 f"fired task {task.task_id} ({task.cron_expression}) -> bus"
             )
+            task.last_run_at = datetime.now()
+            if self._on_fired is not None:
+                try:
+                    self._on_fired(task.task_id)
+                except Exception as e:
+                    _logger.error(
+                        f"record last run for task {task.task_id} failed: {e}"
+                    )
         except Exception as e:
             # 单个任务投递失败不应拖垮调度器
             _logger.error(f"fire task {task.task_id} failed: {e}")
@@ -308,7 +340,7 @@ class CronTaskManager:
 
     def __init__(self, on_trigger: Optional[TriggerCallback] = None):
         self.dao = CronTaskDAO()
-        self.scheduler = CronScheduler(on_trigger=on_trigger)
+        self.scheduler = CronScheduler(on_trigger=on_trigger, on_fired=self.mark_run)
 
     # ---- 回调 ----
 
