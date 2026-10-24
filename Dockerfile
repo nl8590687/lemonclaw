@@ -1,11 +1,12 @@
 FROM ubuntu:26.04
+ARG PYTHON_VERSION=3.14
 COPY . /app
 WORKDIR /root
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt install -y curl tzdata language-pack-zh-hans && curl -LsSf https://astral.sh/uv/install.sh | sh  \
     && export PATH="/root/.local/bin:$PATH" && echo -e "\nzh_CN.UTF-8 UTF-8\n" >> /etc/locale.gen  \
     && echo -e "\nexport LANG=zh_CN.UTF-8\nexport LANGUAGE=zh_CN:zh" >> /etc/profile \
-    && uv venv --python 3.14 &&uv pip install -r /app/requirements.txt
+    && uv venv --python ${PYTHON_VERSION} &&uv pip install -r /app/requirements.txt -c /app/constraints.txt
 
 ENV PATH="/root/.local/bin:${PATH}" LANG=zh_CN.UTF-8 LANGUAGE=zh_CN:zh
 # 时区：镜像只内置 tzdata 保证能力，默认 UTC（中性、无惊喜）；

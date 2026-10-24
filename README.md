@@ -74,14 +74,27 @@ flowchart LR
 
 ## 📦 Installation
 
-**Prerequisites:** Python ≥ 3.11
+**Prerequisites:** Python 3.11-3.14. CI verifies Python 3.11 and 3.14; the Docker image uses Python 3.14.
 
 ### Install from source
 
 ```bash
 git clone https://github.com/nl8590687/lemonclaw.git
 cd lemonclaw
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -e '.[dev]'
+```
+
+Use `pip install -e .` for runtime dependencies only, or add `-c constraints.txt` to the install command for the tested dependency lock. The `lemonclaw` console script is installed with the package.
+
+### Development checks
+
+```bash
+python -m pytest -q
+ruff check .
+basedpyright
+python -m build
 ```
 
 ### Pre-built image (ghcr.io)
@@ -132,7 +145,9 @@ docker run -e TZ=Asia/Shanghai \
 2. **Launch:**
 
    ```bash
-   python3 main.py
+   lemonclaw
+   # Fallback when running from a source checkout without installing the entry point:
+   # python main.py
    ```
 
 3. **Talk to your agent** in the terminal, or send a POST to the webhook (`http://127.0.0.1:8765` by default). Type `/help` to see available slash commands.

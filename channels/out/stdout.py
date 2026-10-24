@@ -56,9 +56,30 @@ class TerminalOutputChannel(BaseOutChannel):
     def write_tool_error(self, error: BaseException):
         self.console.print(Text(f"  工具错误: {error}", style="bold red"))
 
-    def _display_token_stats(self, context: dict[str, dict[str, object]|object]):
+    def _display_token_stats(self, context: dict[str, object]):
         if not isinstance(context, dict):
             context = {}
+
+        def section(name: str) -> dict[str, object]:
+            value = context.get(name, {})
+            return value if isinstance(value, dict) else {}
+
+        tokens = section("tokens")
+        context_tokens = section("context_tokens")
+        messages = section("messages")
+
+        prompt_tokens = tokens.get("prompt_tokens", 0)
+        completion_tokens = tokens.get("completion_tokens", 0)
+        total_tokens = tokens.get("total_tokens", 0)
+        total_prompt_tokens = context_tokens.get("total_prompt_tokens", 0)
+        total_completion_tokens = context_tokens.get("total_completion_tokens", 0)
+        context_total_tokens = context_tokens.get("context_total_tokens", 0)
+        memory_tokens = messages.get("memory_tokens", 0)
+        human_count = messages.get("human_count", 0)
+        ai_count = messages.get("ai_count", 0)
+        tool_count = messages.get("tool_count", 0)
+        system_count = messages.get("system_count", 0)
+        message_count = messages.get("message_count", 0)
 
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column(style="dim")
@@ -68,25 +89,20 @@ class TerminalOutputChannel(BaseOutChannel):
 
         table.add_row(
             "本轮消耗:",
-            f"输入 {context.get("tokens", {}).get('prompt_tokens', 0)} / "
-            f"输出 {context.get("tokens", {}).get('completion_tokens', 0)} / "
-            f"总计 {context.get("tokens", {}).get('total_tokens', 0)} tokens",
+            f"输入 {prompt_tokens} / 输出 {completion_tokens} / 总计 {total_tokens} tokens",
         )
         table.add_row(
             "会话累计:",
-            f"输入 {context.get("context_tokens", {}).get('total_prompt_tokens', 0)} / "
-            f"输出 {context.get("context_tokens", {}).get('total_completion_tokens', 0)} / "
-            f"总计 {context.get("context_tokens", {}).get('context_total_tokens', 0)} tokens",
+            f"输入 {total_prompt_tokens} / 输出 {total_completion_tokens} / 总计 {context_total_tokens} tokens",
         )
 
-        # 更详细的消息统计
         msg_detail = (
-            f"{context.get("messages", {}).get('memory_tokens', 0)} tokens - "
-            f"[bold]{context.get("messages", {}).get('human_count', 0)}[/] 用户 / "
-            f"[bold]{context.get("messages", {}).get('ai_count', 0)}[/] AI / "
-            f"[bold]{context.get("messages", {}).get('tool_count', 0)}[/] 工具 / "
-            f"[bold]{context.get("messages", {}).get('system_count', 0)}[/] 系统 "
-            f"([bold]{context.get("messages", {}).get('message_count', 0)}[/] 总消息)"
+            f"{memory_tokens} tokens - "
+            f"[bold]{human_count}[/] 用户 / "
+            f"[bold]{ai_count}[/] AI / "
+            f"[bold]{tool_count}[/] 工具 / "
+            f"[bold]{system_count}[/] 系统 "
+            f"([bold]{message_count}[/] 总消息)"
         )
         table.add_row("上下文记忆:", msg_detail)
 

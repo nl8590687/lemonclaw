@@ -1,0 +1,24 @@
+{
+  "include": ["main.py"],
+  "exclude": [
+    ".git",
+    ".lemonclaw",
+    ".venv",
+    "build",
+    "dist",
+    "tests"
+  ],
+  "ignore": [
+    "agent",
+    "channels",
+    "config",
+    "dao",
+    "command.py",
+    "loop.py",
+    "tests"
+  ],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.11",
+  "reportMissingImports": "error",
+  "reportMissingModuleSource": "none"
+}

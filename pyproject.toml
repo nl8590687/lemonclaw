@@ -1,0 +1,76 @@
+[build-system]
+requires = ['setuptools>=77']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'lemonclaw'
+version = '1.1.0'
+readme = 'README.md'
+description = 'LemonClaw agent'
+requires-python = '>=3.11'
+dynamic = ['dependencies']
+license = { text = 'Apache-2.0' }
+authors = [{ name = 'LemonClaw Contributors' }]
+keywords = ['ai', 'agent', 'llm', 'workflow', 'automation']
+classifiers = [
+  'Development Status :: 4 - Beta',
+  'Intended Audience :: Developers',
+  'Operating System :: OS Independent',
+  'Programming Language :: Python :: 3',
+  'Programming Language :: Python :: 3.11',
+  'Programming Language :: Python :: 3.12',
+  'Programming Language :: Python :: 3.13',
+  'Programming Language :: Python :: 3.14',
+  'Topic :: Software Development :: Libraries :: Application Frameworks',
+]
+
+[project.optional-dependencies]
+dev = [
+  'build>=1.2',
+  'pytest==9.1.1',
+  'pytest-cov>=6.0',
+  'ruff>=0.9',
+  'basedpyright>=1.20',
+]
+
+[project.scripts]
+lemonclaw = 'main:main'
+
+[project.urls]
+Homepage = 'https://github.com/nl8590687/lemonclaw'
+Issues = 'https://github.com/nl8590687/lemonclaw/issues'
+
+[tool.setuptools]
+py-modules = ['main', 'loop', 'command']
+
+[tool.setuptools.packages.find]
+where = ['.']
+include = ['agent*', 'channels*', 'config*', 'dao*']
+exclude = ['tests*']
+
+[tool.setuptools.dynamic]
+dependencies = { file = ['requirements.txt'] }
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '-ra'
+
+[tool.coverage.run]
+source = ['agent', 'channels', 'config', 'dao', 'loop', 'command', 'main']
+omit = ['tests/*']
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  'pragma: no cover',
+  'if __name__ == .__main__.:',
+]
+
+[tool.ruff]
+target-version = 'py311'
+line-length = 120
+extend-exclude = ['.lemonclaw', '.venv', 'build', 'dist']
+
+[tool.ruff.lint]
+select = ['E9', 'F63', 'F7', 'F82']

@@ -13,11 +13,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from config import get_global_config
-from loop import start_event_source, loop_forever
+import argparse
+from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, version
 
 
-if __name__ == "__main__":
-    config = get_global_config()
+def _get_version() -> str:
+    try:
+        return version("lemonclaw")
+    except PackageNotFoundError:
+        return '1.1.0'
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='lemonclaw',
+        description='Run the LemonClaw personal AI agent.',
+    )
+    parser.add_argument(
+        '--version',
+        action='version',
+        version=f'%(prog)s {_get_version()}',
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    build_parser().parse_args(argv)
+
+    from config import get_global_config
+    from loop import loop_forever, start_event_source
+
+    get_global_config()
     start_event_source()
     loop_forever()
+
+
+if __name__ == '__main__':
+    main()

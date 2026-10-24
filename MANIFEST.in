@@ -1,0 +1,7 @@
+include LICENSE
+include README.md
+include README_ZH-CN.md
+include requirements.txt
+include constraints.txt
+include .lemonclaw/.env.example
+include .lemonclaw/mcp.json.example

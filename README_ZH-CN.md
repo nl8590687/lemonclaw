@@ -74,14 +74,27 @@ flowchart LR
 
 ## 📦 安装
 
-**环境要求：** Python ≥ 3.11
+**环境要求：** Python 3.11-3.14。CI 验证 Python 3.11 与 3.14；Docker 镜像使用 Python 3.14。
 
 ### 源码安装
 
 ```bash
 git clone https://github.com/nl8590687/lemonclaw.git
 cd lemonclaw
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -e '.[dev]'
+```
+
+只安装运行时依赖可用 `pip install -e .`；需要可复现的实验依赖可追加 `-c constraints.txt`。安装后会提供 `lemonclaw` 命令。
+
+### 开发检查
+
+```bash
+python -m pytest -q
+ruff check .
+basedpyright
+python -m build
 ```
 
 ### 预构建镜像（ghcr.io）
@@ -132,7 +145,8 @@ docker run -e TZ=Asia/Shanghai \
 2. **启动：**
 
    ```bash
-   python3 main.py
+   lemonclaw
+   # 未安装入口点、仅在源码目录运行时可用：python main.py
    ```
 
 3. **与你的 Agent 对话** —— 在终端交互，或向 webhook（默认 `http://127.0.0.1:8765`）发 POST 请求。输入 `/help` 查看全部斜杠命令。
