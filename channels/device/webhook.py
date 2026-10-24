@@ -24,11 +24,6 @@ from typing import Callable
 from config import get_global_config
 
 
-_webhook_callback_function: Callable[[str, list[str] | None, dict[str, object]], str] | None = None
-_webhook_auth_token: str|None = None
-_webhook_rate_limiter: TokenBucket|None = None
-
-
 class TokenBucket:
     """
     令牌桶限流器
@@ -70,6 +65,12 @@ class TokenBucket:
             # 确保当前令牌不超过最大值
             if self.tokens > max_tokens:
                 self.tokens = max_tokens
+
+
+# 模块级状态：必须位于 TokenBucket 定义之后，Python 3.13 及以下会在导入时求值注解
+_webhook_callback_function: Callable[[str, list[str] | None, dict[str, object]], str] | None = None
+_webhook_auth_token: str | None = None
+_webhook_rate_limiter: TokenBucket | None = None
 
 
 class WebhookHandler(BaseHTTPRequestHandler):

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_ZH-CN.md)
 
-[![Python Version](https://img.shields.io/badge/Python-≥3.11-blue.svg?style=for-the-badge)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/Python-≥3.13-blue.svg?style=for-the-badge)](https://www.python.org/)
 [![Apache 2.0 Licensed](https://img.shields.io/badge/License-Apache%202.0-green.svg?style=for-the-badge)](https://opensource.org/license/apache-2.0)
 [![GitHub stars](https://img.shields.io/github/stars/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
 [![Last Commit](https://img.shields.io/github/last-commit/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
@@ -74,7 +74,7 @@ flowchart LR
 
 ## 📦 Installation
 
-**Prerequisites:** Python 3.11-3.14. CI verifies Python 3.11 and 3.14; the Docker image uses Python 3.14.
+**Prerequisites:** Python 3.13-3.15. CI verifies Python 3.13, 3.14 and 3.15; the Docker image uses Python 3.14.
 
 ### Install from source
 

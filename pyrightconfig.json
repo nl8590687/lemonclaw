@@ -18,7 +18,7 @@
     "tests"
   ],
   "typeCheckingMode": "basic",
-  "pythonVersion": "3.11",
+  "pythonVersion": "3.13",
   "reportMissingImports": "error",
   "reportMissingModuleSource": "none"
 }

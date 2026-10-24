@@ -75,6 +75,12 @@ class TestScan(unittest.TestCase):
         meta = reg.get_metadata("dup")
         self.assertEqual(meta["description"], "second")  # 后者覆盖
 
+    def test_scan_keeps_highest_version(self):
+        _write_skill(self.dir, "a-1.0.10", "name: dup\ndescription: ten")
+        _write_skill(self.dir, "a-1.0.9", "name: dup\ndescription: nine")
+        reg = SkillRegistry(str(self.dir))
+        self.assertEqual(reg.get_metadata("dup")["description"], "ten")
+
     def test_scan_name_version_derived_from_folder(self):
         _write_skill(self.dir, "no-fm-name-2.3.1", "description: d")  # frontmatter 无 name/version
         reg = SkillRegistry(str(self.dir))

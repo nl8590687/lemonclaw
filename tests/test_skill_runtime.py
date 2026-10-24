@@ -23,7 +23,8 @@ ENABLE_SKILL_SCRIPT 工具守卫、load_skill 依赖未就绪时不安装（不�
 import os
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import dao.db as _db
@@ -58,16 +59,17 @@ class _SkillRuntimeTestCase(unittest.TestCase):
 
 class TestVenvPythonCrossPlatform(unittest.TestCase):
     def test_windows_uses_scripts(self):
-        with patch("os.name", "nt"):
-            self.assertIn("Scripts", _venv_python(Path("/v")))
-            self.assertIn("python.exe", _venv_python(Path("/v")))
+        # 仅替换 manager 模块内的 os 引用，避免 patch 全局 os.name 破坏 pathlib
+        with patch("agent.skill.manager.os", SimpleNamespace(name="nt")):
+            p = _venv_python(Path("/v"))
+        self.assertIn("Scripts", p)
+        self.assertIn("python.exe", p)
 
     def test_posix_uses_bin(self):
-        from pathlib import PurePosixPath
-        with patch("os.name", "posix"):
+        with patch("agent.skill.manager.os", SimpleNamespace(name="posix")):
             p = _venv_python(PurePosixPath("/v"))
-            self.assertIn("bin", p)
-            self.assertNotIn("Scripts", p)
+        self.assertIn("bin", p)
+        self.assertNotIn("Scripts", p)
 
 
 class TestRunScriptSecurity(_SkillRuntimeTestCase):

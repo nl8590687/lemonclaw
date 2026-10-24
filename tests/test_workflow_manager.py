@@ -16,6 +16,7 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import dao.db as _db
 from dao.workflow import ensure_workflow_schema
@@ -41,6 +42,10 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         super().setUp()
         # 覆盖 checkpointer 为 MemorySaver（测试环境不装 SqliteSaver 也不影响）
         self._orig_init_ckpt = None
+        # 不依赖外部 LLM 凭据：manager 构造时才创建 LLM，human 节点不会调用它
+        import agent.llm as _llm
+        self._orig_create_llm = getattr(_llm, "create_openai_llm", None)
+        _llm.create_openai_llm = lambda: MagicMock()
         import agent.workflow.manager as _wm
         from langgraph.checkpoint.memory import MemorySaver
         self._orig_init_ckpt = _wm.WorkflowManager._init_checkpointer
@@ -52,7 +57,19 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         if self._orig_init_ckpt:
             import agent.workflow.manager as _wm
             _wm.WorkflowManager._init_checkpointer = self._orig_init_ckpt
+        if self._orig_create_llm is not None:
+            import agent.llm as _llm
+            _llm.create_openai_llm = self._orig_create_llm
         super().tearDown()
+
+    def _wait_until(self, predicate, timeout=20.0, interval=0.1):
+        """轮询等待异步 worker 完成，避免固定 sleep 在 CI 上抖动。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(interval)
+        return bool(predicate())
 
     def _human_spec(self, name="test_hitl"):
         return {"state_schema": [{"name": "answer", "type": "str"}],
@@ -76,7 +93,8 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         run_id, info = self.mgr.start_run("test_hitl", {}, {"channel": "terminal"})
         self.assertIsNotNone(run_id)
         self.assertEqual(info["status"], "running")
-        time.sleep(2)  # wait for worker
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         run = self.mgr.inspect_run(run_id)
         self.assertEqual(run["status"], "paused")
         self.assertEqual(run["loop_kind"], "need_human")
@@ -84,9 +102,11 @@ class TestManagerDefineAndRun(_TempDbTestCase):
     def test_resume_and_complete(self):
         self.mgr.define_workflow("test_resume", "resume test", self._human_spec())
         run_id, _ = self.mgr.start_run("test_resume", {}, {})
-        time.sleep(2)
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         self.mgr.resume_run(run_id, "同意", {})
-        time.sleep(2)
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "completed"))
         run = self.mgr.inspect_run(run_id)
         self.assertEqual(run["status"], "completed")
         self.assertIn("answer", run.get("output", {}))
@@ -100,8 +120,9 @@ class TestManagerDefineAndRun(_TempDbTestCase):
 
     def test_delete_blocks_on_active_run(self):
         self.mgr.define_workflow("test_block", "block test", self._human_spec())
-        self.mgr.start_run("test_block", {}, {})
-        time.sleep(2)
+        run_id, _ = self.mgr.start_run("test_block", {}, {})
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         ok, msg = self.mgr.delete_workflow("test_block")
         self.assertFalse(ok)  # 有在途 run 拒绝
 
@@ -110,18 +131,20 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         spec["one_shot"] = True
         self.mgr.define_workflow("test_oneshot", "one-shot", spec)
         run_id, _ = self.mgr.start_run("test_oneshot", {}, {})
-        time.sleep(2)
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         # paused → should NOT auto-delete
         self.assertIsNotNone(self.mgr.get_workflow("test_oneshot"))
         # resume → completed → auto-delete
         self.mgr.resume_run(run_id, "ok", {})
-        time.sleep(2)
-        self.assertIsNone(self.mgr.get_workflow("test_oneshot"))
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.get_workflow("test_oneshot") is None))
 
     def test_list_runs_and_workflows(self):
         self.mgr.define_workflow("test_list", "list test", self._human_spec())
-        self.mgr.start_run("test_list", {}, {})
-        time.sleep(2)
+        run_id, _ = self.mgr.start_run("test_list", {}, {})
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         runs = self.mgr.list_runs(status="active")
         self.assertGreaterEqual(len(runs), 1)
         wfs = self.mgr.list_workflows()
@@ -130,7 +153,8 @@ class TestManagerDefineAndRun(_TempDbTestCase):
     def test_cancel_run(self):
         self.mgr.define_workflow("test_cancel", "cancel test", self._human_spec())
         run_id, _ = self.mgr.start_run("test_cancel", {}, {})
-        time.sleep(2)
+        self.assertTrue(self._wait_until(
+            lambda: self.mgr.inspect_run(run_id)["status"] == "paused"))
         ok, msg = self.mgr.cancel_run(run_id)
         self.assertTrue(ok)
 

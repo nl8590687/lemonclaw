@@ -37,6 +37,19 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _version_key(version: str) -> tuple[tuple[int, int, str], ...]:
+    """把技能版本号转成可比较的元组，避免依赖目录枚举顺序。
+
+    纯数字段按数值比较，其余段按字符串比较；"1.0.10" 因此大于 "1.0.9"。
+    """
+    parts: list[tuple[int, int, str]] = []
+    for part in re.split(r"[^0-9A-Za-z]+", str(version).strip().lstrip("vV")):
+        if not part:
+            continue
+        parts.append((1, int(part), "") if part.isdigit() else (0, 0, part.lower()))
+    return tuple(parts)
+
+
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """
     解析 Markdown frontmatter
@@ -81,7 +94,8 @@ class SkillRegistry:
         if not self.skill_dir.exists():
             return
 
-        for skill_folder in self.skill_dir.iterdir():
+        # 目录枚举顺序在不同文件系统上不一致，排序后再扫描以保证结果可复现
+        for skill_folder in sorted(self.skill_dir.iterdir(), key=lambda item: item.name):
             if not skill_folder.is_dir():
                 continue
 
@@ -164,8 +178,10 @@ class SkillRegistry:
             metadata["dir_path"] = str(skill_folder)
             metadata["content_path"] = str(skill_md)
 
-            # 同名技能后者覆盖前者
-            self.metadata_index[metadata["name"]] = metadata
+            # 同名技能保留版本最高者；版本相同则后扫描到的覆盖先扫描到的
+            existing = self.metadata_index.get(metadata["name"])
+            if existing is None or _version_key(metadata["version"]) > _version_key(existing["version"]):
+                self.metadata_index[metadata["name"]] = metadata
 
     def get_metadata(self, skill_name: str) -> dict[str, Any] | None:
         """获取技能元数据，不存在返回 None"""

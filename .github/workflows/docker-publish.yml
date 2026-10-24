@@ -1,10 +1,18 @@
 name: Docker Publish
 
+# 只在打 tag / 发布 Release 时构建镜像；push 到 main 不再触发
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
-  workflow_dispatch:   # 允许手动触发
+    tags: ['v*']            # git push origin v1.2.3
+  release:
+    types: [published]      # GitHub 上发布 Release
+  create:                   # GitHub 网页上直接创建 tag（新建分支也会触发，靠 job 的 if 过滤）
+  workflow_dispatch:        # 允许手动触发
+
+concurrency:
+  # 同一个 tag 可能连续触发 push/create/release，只保留最后一次执行
+  group: docker-publish-${{ github.ref_name }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -12,6 +20,7 @@ env:
 
 jobs:
   build-and-push:
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,10 +49,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch            # main / master
+            type=ref,event=branch            # 手动触发时使用分支名
             type=ref,event=tag               # v1.0.0 -> v1.0.0
-            type=sha,prefix=,format=short    # git短sha
-            type=raw,value=latest,enable={{is_default_branch}}  # main/master 打 latest
+            type=sha,prefix=,format=short    # git 短 sha
+            # latest 只跟随正式 Release 或手动触发，预发布 tag 不会覆盖 latest
+            type=raw,value=latest,enable=${{ (github.event_name == 'release' && !github.event.release.prerelease) || github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
