@@ -6,7 +6,6 @@ on:
     tags: ['v*']            # git push origin v1.2.3
   release:
     types: [published]      # GitHub 上发布 Release
-  create:                   # GitHub 网页上直接创建 tag（新建分支也会触发，靠 job 的 if 过滤）
   workflow_dispatch:        # 允许手动触发
 
 concurrency:
