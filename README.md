@@ -168,6 +168,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent behavior: max ReAct iterations, retained message count |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook server: host/port, auth token, rate limit |
 | `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu/Lark app credentials |
+| `FEISHU_RECEIVED_DIR` / `FEISHU_MAX_DOWNLOAD_MB` / `FEISHU_MAX_SEND_FILE_MB` / `FEISHU_PENDING_FILE_TTL_SECONDS` | Feishu files: receive directory (default `/root/workspace/received`), transfer size caps, pending-file TTL |
 | `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
@@ -183,7 +184,7 @@ LemonClaw receives events through pluggable input channels and broadcasts replie
 |---------|-----------|-------|
 | **Terminal** | in/out | Always on. Interactive stdin + rich terminal output. |
 | **Webhook** | in | HTTP server (default `127.0.0.1:8765`). Optional `X-Auth-Token` auth and per-minute rate limit. Enable with `ENABLE_WEBHOOK=true`. |
-| **Feishu/Lark** | in/out | Bot messaging. Requires `ENABLE_FEISHU=true` plus `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and event subscription configured in the Feishu developer console. In personal mode, the first Feishu user who messages the bot is bound automatically and persisted in `lemonclaw.db`; messages from other Feishu users are ignored, and all Feishu output goes to the bound user while the terminal always keeps outputting. |
+| **Feishu/Lark** | in/out | Bot messaging. Requires `ENABLE_FEISHU=true` plus `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and event subscription configured in the Feishu developer console. In personal mode, the first Feishu user who messages the bot is bound automatically and persisted in `lemonclaw.db`; messages from other Feishu users are ignored, and all Feishu output goes to the bound user while the terminal always keeps outputting. Received files/images/audio/video are saved under `FEISHU_RECEIVED_DIR`; file-only messages are held until the user adds a text instruction. |
 | **Cron** | in | Scheduled tasks. Always on; tasks are managed at runtime via the `/cron` command or the cron tool. |
 
 ---
@@ -204,6 +205,7 @@ LemonClaw receives events through pluggable input channels and broadcasts replie
 | `bocha_search` | Web search via Bocha API | optional (needs `BOCHA_API_KEY`) |
 | `email` | Send email via SMTP | optional (needs `EMAIL_*`) |
 | `bash` | Run shell commands | optional (needs `ENABLE_BASH_TOOL=true`) |
+| `feishu_send_file` | Send a workspace file/image/audio/MP4 to the current Feishu chat | optional (needs complete Feishu config) |
 | `memory` | Read / write persistent memory | optional (needs `ENABLE_MEMORY=true`) |
 | `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
 | `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |

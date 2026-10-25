@@ -26,6 +26,7 @@ from langgraph.errors import GraphRecursionError
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
+from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 from agent.tools.network_guard import begin_user_turn, reset_user_turn
 from agent.callback import StreamingCallback
 from agent.context_agent import ContextAgent
@@ -46,6 +47,24 @@ def _create_agent(llm: BaseChatModel, tools: dict[str, Any], system_prompt: Syst
         middleware=middleware or (),
         checkpointer=checkpointer,
     )
+
+
+def format_attachment_message(attachments: list[dict[str, Any]] | None) -> str:
+    """把收到的飞书附件格式化为一条独立的 UserMessage 文本。"""
+    if not attachments:
+        return ""
+    lines: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        kind = str(attachment.get("kind") or "文件")
+        path = attachment.get("path")
+        if path:
+            lines.append(f"收到用户发来的{kind}：文件路径：{path}")
+        else:
+            error = attachment.get("error") or "下载失败"
+            lines.append(f"收到用户发来的{kind}：下载失败（{error}）")
+    return "\n".join(lines)
 
 
 class AgentService:
@@ -93,17 +112,27 @@ class AgentService:
         tools = create_tool_list()
         return tools
 
-    def run(self, input_msg: str, context: dict, out_chan: BaseOutChannel | None = None):
+    def run(self, input_msg: str, context: dict, out_chan: BaseOutChannel | None = None,
+            attachments: list[dict[str, Any]] | None = None):
         """
         执行一次用户查询，返回最终状态
         """
         out_chan = out_chan or self.default_out_chan
         callback = StreamingCallback(out_chan)
         turn_token = begin_user_turn(input_msg)
+        feishu_token = begin_feishu_turn(context)
+        messages: list[BaseMessage] = []
+        attachment_note = format_attachment_message(attachments)
+        if attachment_note:
+            messages.append(HumanMessage(content=attachment_note))
+        if input_msg.strip():
+            messages.append(HumanMessage(content=input_msg))
+        if not messages:
+            messages.append(HumanMessage(content=input_msg))
         try:
             result = self.agent.invoke(
                 {
-                    "messages": [HumanMessage(content=input_msg)]},
+                    "messages": messages},
                 config = {
                     "configurable": {"thread_id": self.session_id},
                     "callbacks": [callback],
@@ -114,6 +143,7 @@ class AgentService:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
             return None
         finally:
+            reset_feishu_turn(feishu_token)
             reset_user_turn(turn_token)
         self._update_stats(callback)
         context["tokens"] = callback.tokens

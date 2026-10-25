@@ -223,6 +223,7 @@ __marimo__/
 lemonclaw.db
 .lemonclaw/skills/
 .lemonclaw/mcp.json
+workspace/
 
 # SQLite WAL/SHM sidecar files
 *.db-wal

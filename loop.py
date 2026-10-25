@@ -61,6 +61,18 @@ def get_output_channel(event_msg: EventMessage | None = None) -> BaseOutChannel:
     return build_output_channel(context)
 
 
+def format_attachment_log(attachments: list[dict[str, object]]) -> str:
+    """把本轮附件格式化为一行日志，便于确认文件路径已进入上下文。"""
+    parts: list[str] = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind") or "文件"
+        path = item.get("path")
+        parts.append(f"{kind} {path}" if path else f"{kind} 下载失败")
+    return "; ".join(parts)
+
+
 def loop_forever():
     svr = AgentService()
     msg_bus = get_bus()
@@ -73,7 +85,19 @@ def loop_forever():
             event_msg_content = str(event_msg.content) if len(str(event_msg.content)) < 100 else str(event_msg.content)[:100]
             svr.default_out_chan.print(Text(f"\n\n[系统] 收到事件: {event_msg.event_type.value} {event_msg_content}\n\n", style="dim"))
             msg_text: str = event_msg.content.get("text", "")
+            attachments = (
+                event_msg.context.get("attachments")
+                if isinstance(event_msg.context, dict) else None
+            )
+            if not isinstance(attachments, list):
+                attachments = []
+            if attachments:
+                svr.default_out_chan.print(
+                    Text(f"[系统] 附件: {format_attachment_log(attachments)}\n", style="dim")
+                )
             if not event_msg:
+                continue
+            if not msg_text.strip() and not attachments:
                 continue
 
             out_chan = get_output_channel(event_msg)
@@ -83,7 +107,7 @@ def loop_forever():
                     break
             else:
                 context = event_msg.context
-                svr.run(msg_text.strip(), context, out_chan)
+                svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
             svr.trim_msg_history()
         except KeyboardInterrupt:
             break

@@ -34,6 +34,7 @@ from agent.tools.cron_tool import create_cron_tools
 from agent.tools.memory_tool import create_memory_tools
 from agent.tools.skill_tool import create_skill_tools
 from agent.tools.mcp_tool import create_mcp_tools
+from agent.tools.feishu_tool import create_feishu_send_file_tool, feishu_enabled
 from channels.device.crontab import get_cron_manager
 from config import get_global_config
 from agent.memory import get_memory_manager
@@ -61,6 +62,7 @@ __all__ = [
     "create_memory_tools",
     "create_skill_tools",
     "create_mcp_tools",
+    "create_feishu_send_file_tool",
 ]
 
 
@@ -113,5 +115,9 @@ def create_tool_list() -> dict[str, Any]:
     # 多 Agent 工作流工具（与 AgentService 共享同一个 WorkflowManager 单例）
     if config.ENABLE_WORKFLOW:
         tools.extend(create_workflow_tools(get_workflow_manager()))
+
+    # 飞书文件发送工具（仅启用飞书机器人且凭证完整时注册）
+    if feishu_enabled(config):
+        tools.append(create_feishu_send_file_tool(file_safe_dirs))
 
     return tools

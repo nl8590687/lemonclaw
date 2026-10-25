@@ -167,6 +167,7 @@ docker run -e TZ=Asia/Shanghai \
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent 行为：ReAct 最大迭代次数、保留消息数 |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook 服务：主机/端口、鉴权 Token、频率限制 |
 | `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书/Lark 应用凭证 |
+| `FEISHU_RECEIVED_DIR` / `FEISHU_MAX_DOWNLOAD_MB` / `FEISHU_MAX_SEND_FILE_MB` / `FEISHU_PENDING_FILE_TTL_SECONDS` | 飞书文件：接收目录（默认 `/root/workspace/received`）、收发大小上限、纯文件暂存过期时间 |
 | `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
 | `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
@@ -182,7 +183,7 @@ LemonClaw 通过可插拔的输入通道接收事件，并把回复广播给所�
 |------|------|------|
 | **终端** | 输入/输出 | 始终开启。交互式 stdin + rich 终端输出。 |
 | **Webhook** | 输入 | HTTP 服务（默认 `127.0.0.1:8765`）。可选 `X-Auth-Token` 鉴权与每分钟限频。`ENABLE_WEBHOOK=true` 开启。 |
-| **飞书/Lark** | 输入/输出 | 机器人消息。需 `ENABLE_FEISHU=true` 加上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在飞书开发者后台配置事件订阅。个人专用模式下，首个向机器人发消息的飞书用户会被自动绑定（持久化在 `lemonclaw.db`），其他飞书用户的消息会被忽略；所有飞书输出固定回复给该绑定用户，同时终端始终输出。 |
+| **飞书/Lark** | 输入/输出 | 机器人消息。需 `ENABLE_FEISHU=true` 加上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在飞书开发者后台配置事件订阅。个人专用模式下，首个向机器人发消息的飞书用户会被自动绑定（持久化在 `lemonclaw.db`），其他飞书用户的消息会被忽略；所有飞书输出固定回复给该绑定用户，同时终端始终输出。支持接收文件/图片/音视频并保存到 `FEISHU_RECEIVED_DIR`；纯文件消息会暂存，等用户补充文本后再与该轮文本一起进入 Agent。 |
 | **Cron** | 输入 | 定时任务。始终开启；任务可在运行时通过 `/cron` 命令或 cron 工具管理。 |
 
 ---
@@ -203,6 +204,7 @@ LemonClaw 通过可插拔的输入通道接收事件，并把回复广播给所�
 | `bocha_search` | 通过博查 API 联网搜索 | 可选（需 `BOCHA_API_KEY`） |
 | `email` | 通过 SMTP 发送邮件 | 可选（需 `EMAIL_*`） |
 | `bash` | 执行 Shell 命令 | 可选（需 `ENABLE_BASH_TOOL=true`） |
+| `feishu_send_file` | 把工作空间内的文件/图片/音频/MP4 发送给当前飞书会话 | 可选（需完整飞书配置） |
 | `memory` | 读写持久化记忆 | 可选（需 `ENABLE_MEMORY=true`） |
 | `load_skill` / `unload_skill` | 激活 / 卸载技能（指令由中间件注入） | 可选（需 `ENABLE_SKILLS=true`） |
 | `run_skill_script` | 在技能隔离环境执行 Python/Node 脚本 | 可选（需 `ENABLE_SKILL_SCRIPT=true`） |

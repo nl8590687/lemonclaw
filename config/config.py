@@ -92,6 +92,13 @@ class GlobalConfig(BaseSettings):
     ENABLE_FEISHU: bool = str(os.environ.get("ENABLE_FEISHU", "false")).lower() == "true"
     FEISHU_APP_ID: str|None = os.environ.get("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: SecretStr = SecretStr(os.environ.get("FEISHU_APP_SECRET", ""))
+    # 收到飞书文件/图片/音视频后的统一落盘目录
+    FEISHU_RECEIVED_DIR: str = os.environ.get("FEISHU_RECEIVED_DIR", "/root/workspace/received")
+    # 单文件大小上限（MB）。下载接口官方上限 100MB；上传接口文件上限 30MB
+    FEISHU_MAX_DOWNLOAD_MB: int = int(os.environ.get("FEISHU_MAX_DOWNLOAD_MB", "100"))
+    FEISHU_MAX_SEND_FILE_MB: int = int(os.environ.get("FEISHU_MAX_SEND_FILE_MB", "30"))
+    # 纯文件消息暂存等待用户补充文本的过期时间（秒）
+    FEISHU_PENDING_FILE_TTL_SECONDS: int = int(os.environ.get("FEISHU_PENDING_FILE_TTL_SECONDS", "1800"))
 
     # 持久化记忆
     ENABLE_MEMORY: bool = str(os.environ.get("ENABLE_MEMORY", "true")).lower() == "true"
