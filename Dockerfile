@@ -4,12 +4,14 @@ ARG PYTHON_VERSION=3.14
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 系统依赖 + uv（uv 只在构建期装依赖时使用）
-RUN apt-get update && apt install -y --no-install-recommends curl tzdata language-pack-zh-hans \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+RUN apt-get update && apt install -y --no-install-recommends ca-certificates curl tzdata language-pack-zh-hans \
+    && curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh \
+    && sh /tmp/uv-install.sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
+    && uv --version \
     && echo -e "\nzh_CN.UTF-8 UTF-8\n" >> /etc/locale.gen \
     && echo -e "\nexport LANG=zh_CN.UTF-8\nexport LANGUAGE=zh_CN:zh" >> /etc/profile \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/uv-install.sh
 
 # 在项目目录下创建 uv 默认使用的那份 venv（/app/.venv），依赖全部在构建期装好
 WORKDIR /app
