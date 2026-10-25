@@ -58,6 +58,14 @@ class GlobalConfig(BaseSettings):
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
     LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
 
+    # Web/HTTP 安全：私网/本地目标需当前用户 URL 授权或进入信任列表
+    WEB_ACCESS_ALLOW_PRIVATE: bool = str(os.environ.get("WEB_ACCESS_ALLOW_PRIVATE", "true")).lower() == "true"
+    WEB_PRIVATE_ALLOWLIST: str = str(os.environ.get("WEB_PRIVATE_ALLOWLIST", ""))
+    WEB_ALLOW_PRIVATE_WRITES: bool = str(os.environ.get("WEB_ALLOW_PRIVATE_WRITES", "false")).lower() == "true"
+    WEB_MAX_REDIRECTS: int = int(os.environ.get("WEB_MAX_REDIRECTS", 5))
+    WEB_MAX_RESPONSE_BYTES: int = int(os.environ.get("WEB_MAX_RESPONSE_BYTES", 2000000))
+    WEB_REQUEST_TIMEOUT: int = int(os.environ.get("WEB_REQUEST_TIMEOUT", 60))
+
     BOCHA_API_URL: str|None = os.environ.get("BOCHA_API_URL")
     BOCHA_API_KEY: str|None = os.environ.get("BOCHA_API_KEY")
 

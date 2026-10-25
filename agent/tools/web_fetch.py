@@ -33,8 +33,10 @@ Web Fetch 工具模块
 import re
 import json
 import html
-import httpx
 from langchain_core.tools import tool
+
+from agent.tools.network_guard import NetworkAccessError, format_network_error, request_with_redirects
+from agent.tools.untrusted_content import SECURITY_NOTICE, wrap_untrusted_content
 
 
 def _basic_clean(html_content: str) -> str:
@@ -176,23 +178,25 @@ def web_fetch(url: str, output_format: str = "markdown") -> str:
     }
 
     try:
-        with httpx.Client(timeout=60, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
+        response = request_with_redirects("GET", url, headers=headers)
+        if response.status_code >= 400:
+            return f"Web Fetch 失败: HTTP {response.status_code}"
 
-            html_content = response.text
-            cleaned_content = _clean_html(html_content, output_format)
+        cleaned_content = _clean_html(response.text, output_format)
+        result = {
+            "status_code": response.status_code,
+            "url": response.url,
+            "output_format": output_format,
+            "content": wrap_untrusted_content(cleaned_content, response.url, "web"),
+            "content_length": len(cleaned_content),
+            "content_trust": "untrusted",
+            "security_notice": SECURITY_NOTICE,
+            "truncated": response.truncated,
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
-            result = {
-                "status_code": response.status_code,
-                "url": str(response.url),
-                "output_format": output_format,
-                "content": cleaned_content,
-                "content_length": len(cleaned_content)
-            }
-
-            return json.dumps(result, ensure_ascii=False, indent=2)
-
+    except NetworkAccessError as e:
+        return f"Web Fetch {format_network_error(e)}"
     except Exception as e:
         return f"Web Fetch 失败: {str(e)}"
 

@@ -26,6 +26,7 @@ from langgraph.errors import GraphRecursionError
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
+from agent.tools.network_guard import begin_user_turn, reset_user_turn
 from agent.callback import StreamingCallback
 from agent.context_agent import ContextAgent
 from agent.memory import get_memory_manager, MemoryMiddleware
@@ -98,6 +99,7 @@ class AgentService:
         """
         out_chan = out_chan or self.default_out_chan
         callback = StreamingCallback(out_chan)
+        turn_token = begin_user_turn(input_msg)
         try:
             result = self.agent.invoke(
                 {
@@ -111,6 +113,8 @@ class AgentService:
         except GraphRecursionError:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
             return None
+        finally:
+            reset_user_turn(turn_token)
         self._update_stats(callback)
         context["tokens"] = callback.tokens
         context["context_tokens"] = self.stats.get("context_tokens", {})

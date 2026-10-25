@@ -18,8 +18,10 @@ HTTP Request 工具模块
 
 import re
 import json
-import httpx
 from langchain_core.tools import tool
+
+from agent.tools.network_guard import NetworkAccessError, format_network_error, request_with_redirects
+from agent.tools.untrusted_content import SECURITY_NOTICE, sanitize_untrusted_text, wrap_untrusted_content
 
 
 @tool
@@ -68,26 +70,25 @@ def http_request(method: str = "GET", url: str = "", headers: dict[str, object]|
         body = resolve_env_refs(body)
 
     try:
-        with httpx.Client(timeout=60, follow_redirects=True) as client:
-            request_args = {
-                "method": method,
-                "url": url,
-                "headers": headers
-            }
+        request_body = body if method in ['POST', 'PUT', 'PATCH'] else None
+        response = request_with_redirects(method, url, headers=headers, body=request_body)
+        result = {
+            "status_code": response.status_code,
+            "url": response.url,
+            "headers": {
+                sanitize_untrusted_text(key): sanitize_untrusted_text(value)
+                for key, value in response.headers.items()
+            },
+            "body": wrap_untrusted_content(response.text, response.url, "http"),
+            "raw_body_length": len(response.body),
+            "content_trust": "untrusted",
+            "security_notice": SECURITY_NOTICE,
+            "truncated": response.truncated,
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
-            if method in ['POST', 'PUT', 'PATCH'] and body:
-                request_args["content"] = body
-
-            response = client.request(**request_args)
-
-            result = {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.text
-            }
-
-            return json.dumps(result, ensure_ascii=False, indent=2)
-
+    except NetworkAccessError as e:
+        return f"HTTP {format_network_error(e)}"
     except Exception as e:
         return f"HTTP 请求失败: {str(e)}"
 

@@ -164,6 +164,7 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `BOCHA_*` | Bocha web-search API (optional — enables the search tool) |
 | `EMAIL_*` | SMTP server for the email tool (optional) |
 | `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | Tool safety: shell tool on/off, file-access whitelist |
+| `WEB_*` | Web/HTTP safety: private-access switch, allowlist, private writes, redirect/response-size/timeout limits |
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent behavior: max ReAct iterations, retained message count |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook server: host/port, auth token, rate limit |
 | `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu/Lark app credentials |
@@ -210,6 +211,8 @@ LemonClaw receives events through pluggable input channels and broadcasts replie
 | `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | Define, run, resume, manage multi-agent workflows | optional (needs `ENABLE_WORKFLOW=true`) |
 
 > Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
+
+> **Web/HTTP safety boundary**: private/local targets require a full URL explicitly supplied in the user's current message, or an entry in `WEB_PRIVATE_ALLOWLIST`; URLs found in web pages, search results, or tool output do not grant access. Private targets are read-only by default, redirects are revalidated hop by hop, and external responses are marked as untrusted data.
 
 ---
 

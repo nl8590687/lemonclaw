@@ -163,6 +163,7 @@ docker run -e TZ=Asia/Shanghai \
 | `BOCHA_*` | 博查联网搜索 API（可选，开启后生效搜索工具） |
 | `EMAIL_*` | 邮件工具的 SMTP 服务器配置（可选） |
 | `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | 工具安全：Shell 工具开关、文件访问白名单 |
+| `WEB_*` | Web/HTTP 安全：私网访问开关、信任列表、私网写入开关、重定向/响应大小/超时 |
 | `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent 行为：ReAct 最大迭代次数、保留消息数 |
 | `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook 服务：主机/端口、鉴权 Token、频率限制 |
 | `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书/Lark 应用凭证 |
@@ -209,6 +210,8 @@ LemonClaw 通过可插拔的输入通道接收事件，并把回复广播给所�
 | `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | 定义、运行、续跑、管理多 Agent 工作流 | 可选（需 `ENABLE_WORKFLOW=true`） |
 
 > 可扩展：在 `agent/tools/` 下新增工具，并在 `create_tool_list()` 中注册即可。
+
+> **Web/HTTP 安全边界**：私网/本地目标只能由用户**当前消息中的完整 URL**授权，或加入 `WEB_PRIVATE_ALLOWLIST`；网页、搜索结果和工具输出中的 URL 不构成授权。私网目标默认只允许只读方法，重定向逐跳复检；网页/HTTP 响应会标记为不可信外部数据。
 
 ---
 
