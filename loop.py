@@ -121,4 +121,5 @@ def loop_forever():
             svr.memory.on_session_end(svr._current_messages(), fast=True)
         except Exception:
             pass
+    svr.close()
     svr.default_out_chan.print("\n\n[warning]再见！[/warning]\n")
