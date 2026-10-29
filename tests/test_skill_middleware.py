@@ -15,8 +15,8 @@
 """
 agent.memory.middleware 扩展（技能）单元测试
 
-覆盖：skill_manager=None 向后兼容；摘要+活跃全文注入与顺序；记忆不注入的语义
-（记忆不注入，技能摘要/活跃全文每轮现算）；enable/disable 即时反映。
+覆盖：基础提示、技能摘要和活跃全文的注入顺序；每次调用刷新技能；
+enable/disable 即时反映，以及独立的记忆工具读取边界。
 用 mock SkillManager + MemoryManager，不依赖 LLM 与 db。
 """
 
@@ -100,7 +100,7 @@ class TestCacheSemantics(unittest.TestCase):
         self.assertIn("AFTER", _run(mw, "q"))
 
     def test_memory_never_injected_for_any_query(self):
-        # 任何 query 都不自动调用记忆构建
+        # 不同 query 共用技能注入流程，记忆由工具读取
         mm = MagicMock(); mm.build_context.return_value = "MEM"
         sm = MagicMock()
         sm.get_skill_summary_text.return_value = ""

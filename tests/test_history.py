@@ -86,6 +86,7 @@ def test_threshold_summary_order_recent_preserved_restart(database):
         messages = service._current_messages()
         assert messages[0].additional_kwargs['lemonclaw_summary']
         assert messages[1:] == old[-2:]
+        assert service.stats["context_messages"]["memory_tokens"] == 1800
         assert not service._has_interrupted_turn()
     finally:
         service.close()
@@ -166,10 +167,26 @@ def test_end_of_turn_oversized_check_is_idempotent(database):
         summary.assert_not_called()
         messages = service._current_messages()
         assert len(messages[2].content) <= service.tool_max_chars
+        assert service.stats["context_messages"]["memory_tokens"] == 0
         assert messages[-2:] == original[-2:]
         assert not service._has_interrupted_turn()
         with patch.object(service.agent, 'update_state') as update:
             service.trim_msg_history()
         update.assert_not_called()
+    finally:
+        service.close()
+
+
+def test_summary_threshold_uses_api_usage(database):
+    service = make_service()
+    try:
+        set_history(service, conversation('x' * 5000))
+        service.model_context_length = 1000
+        service.stats['context_messages']['memory_tokens'] = 100
+        with patch('agent.agent.ContextAgent') as summary:
+            service.trim_msg_history()
+        summary.assert_not_called()
+        assert service.stats['context_messages']['memory_tokens'] == 100
+        assert service._current_messages() == conversation('x' * 5000)
     finally:
         service.close()

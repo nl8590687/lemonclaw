@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Skill system 注入中间件；记忆由普通记忆工具读取，不自动加入 system。"""
+"""Skill system 注入中间件。"""
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import SystemMessage
 
 
 class MemoryMiddleware(AgentMiddleware):
-    """保留兼容名称和构造参数，只负责原有 Skill system 注入。"""
+    """每次模型调用前注入技能目录和活跃技能全文。"""
 
     def __init__(self, memory_manager, base_prompt: str, skill_manager=None):
         self.memory_manager = memory_manager

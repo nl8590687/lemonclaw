@@ -32,7 +32,7 @@ def _shorten(value, limit):
 
 
 def trim_oversized(messages, boundary: int, limit: int):
-    """返回新消息列表；不原地改写消息、工具参数或多模态块。"""
+    """构造消息与参数副本，返回裁剪后的消息列表。"""
     if limit <= len(_TRIM_MARKER) + 2:
         raise ValueError('CONTEXT_TOOL_MAX_CHARS 过小')
     result = []

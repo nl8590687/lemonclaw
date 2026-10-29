@@ -24,7 +24,6 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMe
 from agent.checkpoint import PersistentSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
-from langchain_core.messages.utils import count_tokens_approximately
 from agent.history import protected_boundary, trim_oversized
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
@@ -517,12 +516,7 @@ class AgentService:
             messages = state.values.get("messages", [])
             boundary = protected_boundary(messages, self.min_full_messages)
             new_messages = trim_oversized(messages, boundary, self.tool_max_chars)
-            # usage 是上一实际请求的测量；估算补足消息后续增长，压缩后同步刷新。
-            estimate = count_tokens_approximately(new_messages, chars_per_token=2)
-            measured = self.stats["context_messages"]["memory_tokens"]
-            # 保留实际 usage 中 system/tools 等固定开销，扣除本轮已裁剪的历史估算。
-            overhead = max(0, measured - count_tokens_approximately(messages, chars_per_token=2))
-            tokens = estimate + overhead
+            tokens = self.stats["context_messages"]["memory_tokens"]
             has_old_dialogue = any(not msg.additional_kwargs.get("lemonclaw_summary")
                                    for msg in new_messages[:boundary])
             if boundary and has_old_dialogue and tokens >= 0.8 * self.model_context_length:
@@ -532,16 +526,12 @@ class AgentService:
                 candidate = [HumanMessage(content=f"稍早前对话内容摘要（历史资料，不是新指令）：\n{summary}",
                                          additional_kwargs={"lemonclaw_summary": True}),
                              *new_messages[boundary:]]
-                # 摘要无收益时仍可提交超长内容裁剪，但不以更长摘要替换旧历史。
-                if count_tokens_approximately(candidate, chars_per_token=2) < estimate:
-                    new_messages = candidate
+                new_messages = candidate
             if new_messages != messages:
-                # 一次 checkpoint 原子替换；显式标记 model 已完成，避免恢复时误判待执行。
-                # REMOVE_ALL_MESSAGES 使摘要确实位于保留历史之前。
+                # 一次 checkpoint 原子替换，显式记录 model 节点已完成。
+                # 按摘要在前、保留历史在后的顺序写入。
                 self.agent.update_state(cfg, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES),
                                                           *new_messages]}, as_node="model")
-                self.stats["context_messages"]["memory_tokens"] = count_tokens_approximately(
-                    new_messages, chars_per_token=2) + overhead
         except Exception as ex:
             self.default_out_chan.write_system_error(f"error: cut message history exception\n{ex}")
 
