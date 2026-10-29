@@ -144,7 +144,9 @@ class AgentService:
                     "configurable": self._thread_config()["configurable"],
                     "callbacks": [callback],
                     "recursion_limit": self.max_iterations * 2,
-                }
+                },
+                # 工具开始执行前必须提交调用状态，避免 SIGKILL 丢失中断证据。
+                durability="sync",
             )
         except GraphRecursionError:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")

@@ -205,3 +205,45 @@ def test_failed_model_turn_is_not_automatically_replayed(database):
         assert restarted.run('新请求', {}, session_key='failed') is not None
     finally:
         restarted.close()
+
+
+def test_tool_call_is_durable_before_side_effect(database, monkeypatch):
+    """人为延迟工具调用 checkpoint，保证副作用不会抢在落盘之前发生。"""
+    from threading import Event
+
+    tool_checked = Event()
+    observed = []
+    reader = PersistentSaver()
+
+    @tool
+    def side_effect() -> str:
+        """模拟需要可靠中断保护的外部写操作。"""
+        try:
+            saved = reader.get_tuple({'configurable': {'thread_id': 'session:durable'}})
+            messages = saved.checkpoint['channel_values'].get('messages', []) if saved else []
+            observed.append(any(isinstance(msg, AIMessage) and msg.tool_calls for msg in messages))
+        finally:
+            tool_checked.set()
+        return '完成'
+
+    service = make_service([
+        AIMessage(content='', tool_calls=[{
+            'name': 'side_effect', 'args': {}, 'id': 'durable-call', 'type': 'tool_call',
+        }]), AIMessage(content='已完成'),
+    ], [side_effect])
+    original_put = service.checkpointer.put
+
+    def delayed_put(config, checkpoint, metadata, new_versions):
+        if any(isinstance(msg, AIMessage) and msg.tool_calls
+               for msg in checkpoint['channel_values'].get('messages', [])):
+            # async 时工具先读取旧状态并解除等待；sync 时等待超时后先落盘再执行工具。
+            tool_checked.wait(timeout=1)
+        return original_put(config, checkpoint, metadata, new_versions)
+
+    monkeypatch.setattr(service.checkpointer, 'put', delayed_put)
+    try:
+        service.run('执行写操作', {}, session_key='durable')
+        assert observed == [True], '副作用执行前，工具调用 checkpoint 必须已提交'
+    finally:
+        service.close()
+        reader.close()
