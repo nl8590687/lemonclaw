@@ -80,6 +80,7 @@ class GlobalConfig(BaseSettings):
     FILE_SAFE_DIRS: str = str(os.environ.get("FILE_SAFE_DIRS", ""))
 
     AGENT_REACT_MAX_ITERATIONS: int = int(os.environ.get("AGENT_REACT_MAX_ITERATIONS", 20))
+    CONTEXT_TOOL_MAX_CHARS: int = int(os.environ.get("CONTEXT_TOOL_MAX_CHARS", 12000))
     CONTEXT_MIN_FULL_MESSAGES: int = int(os.environ.get("CONTEXT_MIN_FULL_MESSAGES", 20))
 
     ENABLE_WEBHOOK: bool = str(os.environ.get("ENABLE_WEBHOOK", "false")).lower() == "true"

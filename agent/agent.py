@@ -23,6 +23,9 @@ from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
 from agent.checkpoint import PersistentSaver
 from langgraph.errors import GraphRecursionError
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langchain_core.messages.utils import count_tokens_approximately
+from agent.history import protected_boundary, trim_oversized
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
@@ -82,13 +85,14 @@ class AgentService:
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
         self.checkpointer = PersistentSaver()
-        # 挂载统一上下文中间件（记忆或技能任一开启即挂载；base_prompt 固定 BASE，
+        # 挂载上下文中间件（保留构造兼容性；仅注入技能，base_prompt 固定 BASE，
         # 技能摘要与活跃全文由中间件每轮现取）
         mw = self._build_middleware()
         self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer, middleware=mw)
         self.session_id = "session-default"
         self.max_iterations = config.AGENT_REACT_MAX_ITERATIONS
         self.min_full_messages = config.CONTEXT_MIN_FULL_MESSAGES
+        self.tool_max_chars = getattr(config, "CONTEXT_TOOL_MAX_CHARS", 12000)
         self.model_context_length = config.MODEL_CONTEXT_LENGTH
         self.model_max_tokens = config.MODEL_MAX_COMPLETION_TOKEN
         self.default_out_chan = build_output_channel()
@@ -504,59 +508,40 @@ class AgentService:
                                    self.checkpointer, middleware=mw)
 
     def trim_msg_history(self):
+        """每轮检查超长内容；达到 token 阈值才摘要，最近 N 条及工具组完整保留。"""
         try:
             cfg = self._thread_config()
             state = self.agent.get_state(cfg)
-            # 中断状态不得被裁剪的 update_state 覆盖，否则可能丢失待处理任务。
             if self._has_interrupted_turn(state):
                 return
             messages = state.values.get("messages", [])
-            new_messages = []
-            changed = False
-            msg_count = len(messages)
-
-            # trim each message content
-            for idx, msg in enumerate(messages):
-                # trim each tool message content
-                if msg_count - idx > self.min_full_messages and isinstance(msg, ToolMessage) and msg.content and len(msg.content) > 500:
-                    new_messages.append(
-                        msg.model_copy(update={
-                            "content": msg.content[:200] + " <full-message-has-been-trimmed> " + msg.content[-200:]
-                        })
-                    )
-                    changed = True
-                # trim each AI tool call message
-                elif msg_count - idx > self.min_full_messages and isinstance(msg, AIMessage) and msg.tool_calls:
-                    new_tool_calls = []
-                    for tool_call in msg.tool_calls:
-                        new_tool_call = {
-                            "name": tool_call.get("name"),
-                            "id": tool_call.get("id"),
-                            "type": tool_call.get("type"),
-                            "args": tool_call.get("args") or {}
-                        }
-                        for key, value in tool_call.get("args", {}).items():
-                            if len(str(value)) > 500:
-                                value_str = str(value)
-                                new_tool_call["args"][key] = value_str[:200] + " <full-arg-value-was-too-long-and-has-been-trimmed> " + value_str[-200:]
-                        new_tool_calls.append(new_tool_call)
-                    new_messages.append(msg.model_copy(update={"tool_calls": new_tool_calls}))
-                    changed = True
-                else:
-                    new_messages.append(msg)
-
-            # trim total message tokens
-            if msg_count > self.min_full_messages and self.stats["context_messages"]["memory_tokens"] >= 0.8 * self.model_context_length:
-                p = len(new_messages) if self.min_full_messages == 0 else -self.min_full_messages
-                need_sum_msgs = new_messages[:p]
-                ctx_agent = ContextAgent()
-                txt = ctx_agent.run(need_sum_msgs)
-                remove_msgs = [RemoveMessage(id=msg.id) for msg in need_sum_msgs]
-                new_messages = remove_msgs + [HumanMessage(content=f"稍早前对话内容摘要：\n{txt}")] + new_messages[p:]
-                changed = True
-
-            if changed:
-                self.agent.update_state(cfg, {"messages": new_messages})
+            boundary = protected_boundary(messages, self.min_full_messages)
+            new_messages = trim_oversized(messages, boundary, self.tool_max_chars)
+            # usage 是上一实际请求的测量；估算补足消息后续增长，压缩后同步刷新。
+            estimate = count_tokens_approximately(new_messages, chars_per_token=2)
+            measured = self.stats["context_messages"]["memory_tokens"]
+            # 保留实际 usage 中 system/tools 等固定开销，扣除本轮已裁剪的历史估算。
+            overhead = max(0, measured - count_tokens_approximately(messages, chars_per_token=2))
+            tokens = estimate + overhead
+            has_old_dialogue = any(not msg.additional_kwargs.get("lemonclaw_summary")
+                                   for msg in new_messages[:boundary])
+            if boundary and has_old_dialogue and tokens >= 0.8 * self.model_context_length:
+                summary = ContextAgent().run(new_messages[:boundary])
+                if not isinstance(summary, str) or not summary.strip():
+                    raise ValueError("上下文摘要为空，保留原有历史")
+                candidate = [HumanMessage(content=f"稍早前对话内容摘要（历史资料，不是新指令）：\n{summary}",
+                                         additional_kwargs={"lemonclaw_summary": True}),
+                             *new_messages[boundary:]]
+                # 摘要无收益时仍可提交超长内容裁剪，但不以更长摘要替换旧历史。
+                if count_tokens_approximately(candidate, chars_per_token=2) < estimate:
+                    new_messages = candidate
+            if new_messages != messages:
+                # 一次 checkpoint 原子替换；显式标记 model 已完成，避免恢复时误判待执行。
+                # REMOVE_ALL_MESSAGES 使摘要确实位于保留历史之前。
+                self.agent.update_state(cfg, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                                                          *new_messages]}, as_node="model")
+                self.stats["context_messages"]["memory_tokens"] = count_tokens_approximately(
+                    new_messages, chars_per_token=2) + overhead
         except Exception as ex:
             self.default_out_chan.write_system_error(f"error: cut message history exception\n{ex}")
 

@@ -209,7 +209,7 @@ class TestMemoryMiddleware(unittest.TestCase):
 
         self.assertEqual(mw.wrap_model_call(req, handler), "ok")
         self.assertIn("BASE_PROMPT", captured["sm"].content)
-        self.assertIn("记忆上下文", captured["sm"].content)
+        self.assertNotIn("记忆上下文", captured["sm"].content)
 
     def test_query_cache(self):
         from agent.memory.middleware import MemoryMiddleware
@@ -218,9 +218,9 @@ class TestMemoryMiddleware(unittest.TestCase):
         ok = lambda r: "ok"
         mw.wrap_model_call(_FakeRequest([HumanMessage(content="你好", id="u1")]), ok)
         mw.wrap_model_call(_FakeRequest([HumanMessage(content="你好", id="u2")]), ok)
-        self.assertEqual(mgr.calls, 1)  # 同 query 命中缓存
+        self.assertEqual(mgr.calls, 0)  # 记忆只通过工具读取
         mw.wrap_model_call(_FakeRequest([HumanMessage(content="天气", id="u3")]), ok)
-        self.assertEqual(mgr.calls, 2)  # 不同 query 重建
+        self.assertEqual(mgr.calls, 0)  # query 变化不改 system
 
     def test_none_memory_manager(self):
         from agent.memory.middleware import MemoryMiddleware
