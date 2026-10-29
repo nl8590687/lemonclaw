@@ -15,8 +15,8 @@
 """
 agent.memory.middleware 扩展（技能）单元测试
 
-覆盖：skill_manager=None 向后兼容；摘要+活跃全文注入与顺序；P2-7 缓存语义
-（记忆 _ctx 按 query 缓存，技能摘要/活跃全文每轮现算）；enable/disable 即时反映。
+覆盖：基础提示、技能摘要和活跃全文的注入顺序；每次调用刷新技能；
+enable/disable 即时反映，以及独立的记忆工具读取边界。
 用 mock SkillManager + MemoryManager，不依赖 LLM 与 db。
 """
 
@@ -45,12 +45,13 @@ def _run(mw, query: str):
 
 
 class TestBackwardCompat(unittest.TestCase):
-    def test_skill_manager_none_acts_as_memory_only(self):
+    def test_skill_manager_none_keeps_base_without_memory(self):
         mm = MagicMock()
         mm.build_context.return_value = "MEM"
         mw = MemoryMiddleware(mm, "BASE")  # 无 skill_manager
         content = _run(mw, "q")
-        self.assertEqual(content, "BASE\n\nMEM")
+        self.assertEqual(content, "BASE")
+        mm.build_context.assert_not_called()
 
     def test_no_managers_just_base(self):
         mw = MemoryMiddleware(None, "BASE")
@@ -69,10 +70,10 @@ class TestInjectionOrder(unittest.TestCase):
         self.assertIn("BASE", content)
         self.assertIn("SUMMARY", content)
         self.assertIn("ACTIVE", content)
-        self.assertIn("MEM", content)
-        # 顺序：BASE < SUMMARY < ACTIVE < MEM
+        self.assertNotIn("MEM", content)
+        # Skill 注入顺序保持 BASE < SUMMARY < ACTIVE
         self.assertLess(content.index("SUMMARY"), content.index("ACTIVE"))
-        self.assertLess(content.index("ACTIVE"), content.index("MEM"))
+        mm.build_context.assert_not_called()
 
 
 class TestCacheSemantics(unittest.TestCase):
@@ -98,8 +99,8 @@ class TestCacheSemantics(unittest.TestCase):
         self.assertIn("BEFORE", _run(mw, "q"))
         self.assertIn("AFTER", _run(mw, "q"))
 
-    def test_memory_ctx_cached_per_query(self):
-        # 记忆上下文按 query 缓存：同一 query 多轮只调一次 build_context
+    def test_memory_never_injected_for_any_query(self):
+        # 不同 query 共用技能注入流程，记忆由工具读取
         mm = MagicMock(); mm.build_context.return_value = "MEM"
         sm = MagicMock()
         sm.get_skill_summary_text.return_value = ""
@@ -107,9 +108,9 @@ class TestCacheSemantics(unittest.TestCase):
         mw = MemoryMiddleware(mm, "BASE", skill_manager=sm)
         _run(mw, "q")
         _run(mw, "q")  # 同 query
-        self.assertEqual(mm.build_context.call_count, 1)
+        self.assertEqual(mm.build_context.call_count, 0)
         _run(mw, "q2")  # 新 query
-        self.assertEqual(mm.build_context.call_count, 2)
+        self.assertEqual(mm.build_context.call_count, 0)
 
 
 if __name__ == "__main__":
