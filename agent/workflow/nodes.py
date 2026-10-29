@@ -117,7 +117,7 @@ def _subagent_node(nc: dict, manager):
 def _main_agent_node(nc: dict):
     """主 Agent 自身作为节点（可选）：interrupt(need_main_agent) 让出到主循环。"""
     def fn(state, config=None):
-        run_id = (config or {}).get("configurable", {}).get("thread_id", "")
+        run_id = (config or {}).get("configurable", {}).get("thread_id", "").removeprefix("workflow:")
         task = render_template(nc.get("task", ""), state)
         summary = render_template(nc.get("summary", ""), state)
         value = interrupt({
@@ -133,7 +133,7 @@ def _main_agent_node(nc: dict):
 def _human_node(nc: dict):
     """HITL 输入：interrupt(need_human) 让出，主 Agent 通知人，人答复经 run_id 续跑回填。"""
     def fn(state, config=None):
-        run_id = (config or {}).get("configurable", {}).get("thread_id", "")
+        run_id = (config or {}).get("configurable", {}).get("thread_id", "").removeprefix("workflow:")
         question = render_template(nc.get("question", ""), state)
         handler = nc.get("handler", "interactive")
         value = interrupt({

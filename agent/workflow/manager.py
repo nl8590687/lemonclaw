@@ -59,15 +59,9 @@ class WorkflowManager:
     # ---- checkpointer ----
 
     def _init_checkpointer(self):
-        """SqliteSaver 单例（指向 .lemonclaw/lemonclaw.db，WAL）。"""
-        import sqlite3
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        from dao.db import get_db_path
-        conn = sqlite3.connect(str(get_db_path()), check_same_thread=False, timeout=30.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        saver = SqliteSaver(conn)
-        saver.setup()
-        return saver
+        """与主 Agent 共用 DAO 的单库连接策略。"""
+        from agent.checkpoint import PersistentSaver
+        return PersistentSaver()
 
     # ---- tools（延迟，避免循环初始化）----
 
@@ -258,10 +252,8 @@ class WorkflowManager:
     def _cleanup_run(self, run_id: str):
         """删除 run 的 LangGraph checkpoint（checkpoints + writes 表）+ run 记录。"""
         try:
-            from dao.db import get_connection
-            with get_connection() as conn:
-                conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (run_id,))
-                conn.execute("DELETE FROM writes WHERE thread_id = ?", (run_id,))
+            self.checkpointer.delete_thread(f"workflow:{run_id}")
+            self.checkpointer.delete_thread(run_id)  # 兼容升级前的 checkpoint
         except Exception:
             logger.warning("checkpoint cleanup failed for %s", run_id)
         self.dao.delete_run(run_id)

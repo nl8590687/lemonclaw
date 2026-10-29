@@ -275,7 +275,8 @@ def test_agent_run_injects_attachment_path_as_user_message():
     captured = {}
 
     class _FakeAgent:
-        def invoke(self, payload, config=None):
+        def invoke(self, payload, config=None, *, durability=None):
+            assert durability == "sync"
             captured["messages"] = payload["messages"]
             return {"messages": [AIMessage(content="ok")]}
 

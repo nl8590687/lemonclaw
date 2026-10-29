@@ -21,7 +21,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
-from langgraph.checkpoint.memory import MemorySaver
+from agent.checkpoint import PersistentSaver
 from langgraph.errors import GraphRecursionError
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
@@ -81,7 +81,7 @@ class AgentService:
         self.workflow_manager = get_workflow_manager() if config.ENABLE_WORKFLOW else None
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
-        self.checkpointer = MemorySaver()
+        self.checkpointer = PersistentSaver()
         # 挂载统一上下文中间件（记忆或技能任一开启即挂载；base_prompt 固定 BASE，
         # 技能摘要与活跃全文由中间件每轮现取）
         mw = self._build_middleware()
@@ -113,11 +113,18 @@ class AgentService:
         return tools
 
     def run(self, input_msg: str, context: dict, out_chan: BaseOutChannel | None = None,
-            attachments: list[dict[str, Any]] | None = None):
+            attachments: list[dict[str, Any]] | None = None, session_key: str | None = None):
         """
         执行一次用户查询，返回最终状态
         """
         out_chan = out_chan or self.default_out_chan
+        self.session_id = session_key or context.get("session_key") or "session-default"
+        if self._has_interrupted_turn():
+            out_chan.write_system_error(
+                "上轮执行已中断，工具可能已产生副作用，未自动重试。"
+                "请先核实执行结果，再用 /clear 清理中断状态并重新提交请求。"
+            )
+            return None
         callback = StreamingCallback(out_chan)
         turn_token = begin_user_turn(input_msg)
         feishu_token = begin_feishu_turn(context)
@@ -134,10 +141,12 @@ class AgentService:
                 {
                     "messages": messages},
                 config = {
-                    "configurable": {"thread_id": self.session_id},
+                    "configurable": self._thread_config()["configurable"],
                     "callbacks": [callback],
                     "recursion_limit": self.max_iterations * 2,
-                }
+                },
+                # 工具开始执行前必须提交调用状态，避免 SIGKILL 丢失中断证据。
+                durability="sync",
             )
         except GraphRecursionError:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
@@ -183,7 +192,7 @@ class AgentService:
         """
         try:
             state = self.agent.get_state(
-                {"configurable": {"thread_id": self.session_id}}
+                self._thread_config()
             )
             messages = state.values.get("messages", [])
 
@@ -231,11 +240,32 @@ class AgentService:
         self._middleware = mw[0]
         return mw
 
+    def _thread_config(self) -> dict:
+        return {"configurable": {"thread_id": f"session:{self.session_id}"}}
+
+    def _has_interrupted_turn(self, state=None) -> bool:
+        # 仅真实持久服务需要检查；兼容未初始化 checkpoint 的测试替身。
+        if not hasattr(self, "checkpointer"):
+            return False
+        if state is None:
+            state = self.agent.get_state(self._thread_config())
+        if state.next:
+            return True
+        # 升级/配置变更可能移除 tools 节点，LangGraph 此时不再返回 pending task。
+        # 仍须阻止含未完成 tool call 的历史被当作完整 turn 继续执行。
+        messages = state.values.get("messages", [])
+        completed = {msg.tool_call_id for msg in messages if isinstance(msg, ToolMessage)}
+        return any(call["id"] not in completed
+                   for msg in messages if isinstance(msg, AIMessage)
+                   for call in msg.tool_calls)
+
+    def close(self):
+        """关闭主 Agent checkpoint 连接，不删除持久历史。"""
+        self.checkpointer.close()
+
     def _rebuild_agent(self):
-        """重建工作记忆：新 MemorySaver + 重建 agent（含中间件）+ 重置统计。
-        修复：原实现未传 middleware，导致 /clear、/resume 后记忆与技能注入丢失；
-        现复用 _build_middleware() 重新挂载。"""
-        self.checkpointer = MemorySaver()
+        """仅清理当前 thread，复用持久 saver，并重建中间件与统计。"""
+        self.checkpointer.delete_thread(self._thread_config()["configurable"]["thread_id"])
         mw = self._build_middleware()
         self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer, middleware=mw)
         self.stats = {
@@ -258,7 +288,7 @@ class AgentService:
         """获取当前工作记忆中的消息（供 on_session_end 归档用）"""
         try:
             state = self.agent.get_state(
-                {"configurable": {"thread_id": self.session_id}}
+                self._thread_config()
             )
             return state.values.get("messages", [])
         except Exception:
@@ -301,7 +331,7 @@ class AgentService:
         msgs = self.memory.reconstruct_messages(target)
         if msgs:
             self.agent.update_state(
-                {"configurable": {"thread_id": self.session_id}},
+                self._thread_config(),
                 {"messages": msgs},
             )
         return True
@@ -475,8 +505,11 @@ class AgentService:
 
     def trim_msg_history(self):
         try:
-            cfg = {"configurable": {"thread_id": self.session_id}}
+            cfg = self._thread_config()
             state = self.agent.get_state(cfg)
+            # 中断状态不得被裁剪的 update_state 覆盖，否则可能丢失待处理任务。
+            if self._has_interrupted_turn(state):
+                return
             messages = state.values.get("messages", [])
             new_messages = []
             changed = False

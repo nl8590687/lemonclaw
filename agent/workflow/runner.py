@@ -38,12 +38,22 @@ class WorkflowRunner:
         self.recursion_limit = recursion_limit
         self.result_max_chars = result_max_chars
 
+    def _run_config(self, run_id: str) -> dict:
+        config = {"configurable": {"thread_id": f"workflow:{run_id}"},
+                  "recursion_limit": self.recursion_limit}
+        # 已有在途 Workflow 继续使用旧 thread，避免升级后无法 resume。
+        if self.checkpointer.get_tuple(config) is None:
+            legacy = {"configurable": {"thread_id": run_id},
+                      "recursion_limit": self.recursion_limit}
+            if self.checkpointer.get_tuple(legacy) is not None:
+                return legacy
+        return config
+
     def invoke(self, graph, run_id: str, workflow_id: str, input: dict,
                context: dict, dao) -> dict:
         """graph.invoke(input, thread_id=run_id) -> 处理返回（interrupt/completed/error）。
         返回 {status, loop_kind, payload}。"""
-        config = {"configurable": {"thread_id": run_id},
-                  "recursion_limit": self.recursion_limit}
+        config = self._run_config(run_id)
         try:
             graph.invoke(input, config=config)
         except Exception as ex:
@@ -75,8 +85,7 @@ class WorkflowRunner:
 
     def resume(self, graph, run_id: str, workflow_id: str, value, context: dict) -> dict:
         """graph.invoke(Command(resume=value), thread_id=run_id) -> 同 invoke 处理。"""
-        config = {"configurable": {"thread_id": run_id},
-                  "recursion_limit": self.recursion_limit}
+        config = self._run_config(run_id)
         try:
             graph.invoke(Command(resume=value), config=config)
         except Exception as ex:
