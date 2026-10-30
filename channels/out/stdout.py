@@ -71,12 +71,14 @@ class TerminalOutputChannel(BaseOutChannel):
         prompt_tokens = tokens.get("prompt_tokens", 0)
         cached_prompt_tokens = tokens.get("cached_prompt_tokens", 0)
         uncached_prompt_tokens = tokens.get("uncached_prompt_tokens", prompt_tokens - cached_prompt_tokens)
+        cache_hit_rate = cached_prompt_tokens / prompt_tokens if prompt_tokens else 0
         completion_tokens = tokens.get("completion_tokens", 0)
         total_tokens = tokens.get("total_tokens", 0)
         total_prompt_tokens = context_tokens.get("total_prompt_tokens", 0)
         total_cached_prompt_tokens = context_tokens.get("total_cached_prompt_tokens", 0)
         total_uncached_prompt_tokens = context_tokens.get(
             "total_uncached_prompt_tokens", total_prompt_tokens - total_cached_prompt_tokens)
+        total_cache_hit_rate = total_cached_prompt_tokens / total_prompt_tokens if total_prompt_tokens else 0
         total_completion_tokens = context_tokens.get("total_completion_tokens", 0)
         context_total_tokens = context_tokens.get("context_total_tokens", 0)
         memory_tokens = messages.get("memory_tokens", 0)
@@ -94,11 +96,11 @@ class TerminalOutputChannel(BaseOutChannel):
 
         table.add_row(
             "本轮消耗:",
-            f"输入 {prompt_tokens}（缓存 {cached_prompt_tokens} / 未缓存 {uncached_prompt_tokens}） / 输出 {completion_tokens} / 总计 {total_tokens} tokens",
+            f"输入 {prompt_tokens}（缓存 {cached_prompt_tokens} / 未缓存 {uncached_prompt_tokens} / 命中率 {cache_hit_rate:.1%}） / 输出 {completion_tokens} / 总计 {total_tokens} tokens",
         )
         table.add_row(
             "会话累计:",
-            f"输入 {total_prompt_tokens}（缓存 {total_cached_prompt_tokens} / 未缓存 {total_uncached_prompt_tokens}） / 输出 {total_completion_tokens} / 总计 {context_total_tokens} tokens",
+            f"输入 {total_prompt_tokens}（缓存 {total_cached_prompt_tokens} / 未缓存 {total_uncached_prompt_tokens} / 命中率 {total_cache_hit_rate:.1%}） / 输出 {total_completion_tokens} / 总计 {context_total_tokens} tokens",
         )
 
         msg_detail = (

@@ -64,6 +64,7 @@ def test_react_and_session_accumulation_and_print():
     text = output.getvalue()
     assert '缓存 230 / 未缓存 70' in text
     assert '缓存 460 / 未缓存 140' in text
+    assert text.count('命中率 76.7%') == 2
 
 
 def test_print_accepts_older_token_context():
@@ -72,3 +73,24 @@ def test_print_accepts_older_token_context():
     channel.console = Console(file=output, width=240, color_system=None)
     channel._display_token_stats({'tokens': {'prompt_tokens': 100}})
     assert '缓存 0 / 未缓存 100' in output.getvalue()
+
+
+def test_cache_hit_rate_uses_weighted_session_totals():
+    output = StringIO()
+    channel = object.__new__(TerminalOutputChannel)
+    channel.console = Console(file=output, width=240, color_system=None)
+    channel._display_token_stats({
+        'tokens': {'prompt_tokens': 100, 'cached_prompt_tokens': 80},
+        'context_tokens': {'total_prompt_tokens': 1000, 'total_cached_prompt_tokens': 500},
+    })
+    text = output.getvalue()
+    assert '命中率 80.0%' in text
+    assert '命中率 50.0%' in text
+
+
+def test_empty_input_has_zero_hit_rate():
+    output = StringIO()
+    channel = object.__new__(TerminalOutputChannel)
+    channel.console = Console(file=output, width=240, color_system=None)
+    channel._display_token_stats({})
+    assert output.getvalue().count('命中率 0.0%') == 2
