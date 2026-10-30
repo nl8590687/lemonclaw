@@ -98,6 +98,8 @@ class AgentService:
         self.stats = {
             "context_tokens": {
                 "total_prompt_tokens": 0,
+                "total_cached_prompt_tokens": 0,
+                "total_uncached_prompt_tokens": 0,
                 "total_completion_tokens": 0,
                 "context_total_tokens": 0,
             },
@@ -178,6 +180,8 @@ class AgentService:
     def _update_stats(self, callback: StreamingCallback):
         tokens_stats = callback.tokens
         self.stats["context_tokens"]["total_prompt_tokens"] += tokens_stats["prompt_tokens"]
+        self.stats["context_tokens"]["total_cached_prompt_tokens"] += tokens_stats["cached_prompt_tokens"]
+        self.stats["context_tokens"]["total_uncached_prompt_tokens"] += tokens_stats["uncached_prompt_tokens"]
         self.stats["context_tokens"]["total_completion_tokens"] += tokens_stats["completion_tokens"]
         self.stats["context_tokens"]["context_total_tokens"] += tokens_stats["total_tokens"]
 
@@ -274,6 +278,8 @@ class AgentService:
         self.stats = {
             "context_tokens": {
                 "total_prompt_tokens": 0,
+                "total_cached_prompt_tokens": 0,
+                "total_uncached_prompt_tokens": 0,
                 "total_completion_tokens": 0,
                 "context_total_tokens": 0,
             },

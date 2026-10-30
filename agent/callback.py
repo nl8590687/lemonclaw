@@ -33,6 +33,8 @@ class StreamingCallback(BaseCallbackHandler):
         self.console = console
         self.tokens = {
             "prompt_tokens": 0,
+            "cached_prompt_tokens": 0,
+            "uncached_prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "successful_requests": 0,
@@ -53,6 +55,14 @@ class StreamingCallback(BaseCallbackHandler):
                     if usage:
                         self.tokens["memory_tokens"] = max(usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
                                                             usage.get("total_tokens", 0))
+                        input_tokens = usage.get("input_tokens", 0)
+                        cache_reads = [value or 0 for key, value in (usage.get("input_token_details") or {}).items()
+                                       if key.endswith("cache_read")]
+                        raw_usage = generation.message.response_metadata.get("token_usage") or {}
+                        cached = sum(cache_reads) if cache_reads else raw_usage.get("prompt_cache_hit_tokens", 0) or 0
+                        cached = min(input_tokens, max(0, cached))
+                        self.tokens["cached_prompt_tokens"] += cached
+                        self.tokens["uncached_prompt_tokens"] += input_tokens - cached
                         self.tokens["prompt_tokens"] += usage.get("input_tokens", 0)
                         self.tokens["completion_tokens"] += usage.get("output_tokens", 0)
                         self.tokens["total_tokens"] += usage.get("total_tokens",
