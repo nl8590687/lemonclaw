@@ -36,6 +36,7 @@ from agent.memory import get_memory_manager, MemoryMiddleware
 from agent.skill import get_skill_manager
 from agent.mcp import get_mcp_manager
 from agent.workflow import get_workflow_manager
+from agent.workflow.context import origin_context
 from channels.out import BaseOutChannel, build_output_channel
 from config import get_global_config
 from dao.memory import CoreMemory
@@ -146,7 +147,10 @@ class AgentService:
                 {
                     "messages": messages},
                 config = {
-                    "configurable": self._thread_config()["configurable"],
+                    "configurable": {
+                        **self._thread_config()["configurable"],
+                        "origin_context": origin_context({"configurable": {"origin_context": context}}),
+                    },
                     "callbacks": [callback],
                     "recursion_limit": self.max_iterations * 2,
                 },

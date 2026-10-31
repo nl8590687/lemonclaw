@@ -300,17 +300,19 @@ class CronScheduler:
             )
             return
         try:
-            self._on_trigger(
-                task.prompt,
-                None,
-                {
-                    "source": "cron",
-                    "task_id": task.task_id,
-                    "cron_expression": task.cron_expression,
-                },
-            )
+            context = {
+                "source": "cron",
+                "task_id": task.task_id,
+                "cron_expression": task.cron_expression,
+            }
+            if task.metadata.get("workflow_id"):
+                context.update({key: task.metadata[key] for key in
+                                ("workflow_id", "workflow_input", "origin_context")
+                                if key in task.metadata})
+            self._on_trigger(task.prompt, None, context)
+            target = "workflow" if task.metadata.get("workflow_id") else "bus"
             _logger.info(
-                f"fired task {task.task_id} ({task.cron_expression}) -> bus"
+                f"fired task {task.task_id} ({task.cron_expression}) -> {target}"
             )
             task.last_run_at = datetime.now()
             if self._on_fired is not None:
@@ -377,6 +379,7 @@ class CronTaskManager:
         cron_expression: str,
         prompt_original: str = "",
         enabled: bool = True,
+        metadata: dict | None = None,
     ) -> CronTask:
         """创建任务，cron 表达式非法会抛 ``ValueError``"""
         valid, msg = validate_cron(cron_expression)
@@ -392,6 +395,7 @@ class CronTaskManager:
             created_at=now,
             updated_at=now,
             enabled=enabled,
+            metadata=dict(metadata or {}),
         )
 
         if not self.dao.insert(task):
@@ -408,6 +412,7 @@ class CronTaskManager:
         prompt: Optional[str] = None,
         cron_expression: Optional[str] = None,
         enabled: Optional[bool] = None,
+        metadata: dict | None = None,
     ) -> CronTask | None:
         """更新任务，未找到返回 ``None``，cron 非法抛 ``ValueError``"""
         task = self.dao.get(task_id)
@@ -423,6 +428,8 @@ class CronTaskManager:
             task.prompt = prompt
         if enabled is not None:
             task.enabled = enabled
+        if metadata is not None:
+            task.metadata = dict(metadata)
         task.updated_at = datetime.now()
 
         if not self.dao.update(task):

@@ -54,6 +54,7 @@ class WorkflowRunner:
         """graph.invoke(input, thread_id=run_id) -> 处理返回（interrupt/completed/error）。
         返回 {status, loop_kind, payload}。"""
         config = self._run_config(run_id)
+        config["configurable"]["origin_context"] = context
         try:
             graph.invoke(input, config=config)
         except Exception as ex:
@@ -86,6 +87,7 @@ class WorkflowRunner:
     def resume(self, graph, run_id: str, workflow_id: str, value, context: dict) -> dict:
         """graph.invoke(Command(resume=value), thread_id=run_id) -> 同 invoke 处理。"""
         config = self._run_config(run_id)
+        config["configurable"]["origin_context"] = context
         try:
             graph.invoke(Command(resume=value), config=config)
         except Exception as ex:

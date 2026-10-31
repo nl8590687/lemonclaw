@@ -160,6 +160,8 @@ class WorkflowBuilder:
         tool_names = nc.get("tools", [])
         selected = []
         for tn in tool_names:
+            if tn in {"load_skill", "unload_skill"}:
+                raise ValueError("子 Agent 请通过 skills 字段声明技能")
             if tn.startswith("workflow_"):
                 raise ValueError(f"SubAgent 工具集不能含 workflow_* 工具: {tn}（递归护栏，§1.7）")
             t = self.tools.get(tn)
@@ -168,6 +170,7 @@ class WorkflowBuilder:
                 continue
             selected.append(t)
 
+        base_prompt = system_prompt
         # skills 指令追加进 system_prompt
         skills = nc.get("skills", [])
         skill_text = self._resolve_skills(skills)
@@ -175,25 +178,28 @@ class WorkflowBuilder:
             system_prompt = system_prompt + "\n\n" + skill_text
 
         agent = cls(sa_id, self.llm, system_prompt=system_prompt, tools=selected)
+        agent.workflow_skills = tuple(skills)
+        agent.workflow_base_prompt = base_prompt
         self.manager._subagents[sa_id] = agent
 
     def _resolve_skills(self, skill_names: list) -> str:
         """把命中技能的指令正文拼接为文本（对齐主 Agent 技能注入）。"""
         if not skill_names:
             return ""
-        try:
-            from agent.skill import get_skill_manager
-            sm = get_skill_manager()
-            if sm is None:
-                return ""
-            parts = []
-            for sn in skill_names:
-                sk = sm.get_skill(sn)
-                if sk:
-                    parts.append(f"## 技能: {sn}\n{getattr(sk, 'content', '') or getattr(sk, 'description', '')}")
-            return "\n\n".join(parts)
-        except Exception:
-            return ""
+        from config import get_global_config
+        if not get_global_config().ENABLE_SKILLS:
+            raise ValueError("技能系统未启用")
+        from agent.skill import get_skill_manager
+        sm = get_skill_manager()
+        parts = []
+        for name in skill_names:
+            if not sm or not sm.is_available(name):
+                raise ValueError(f"技能不可用: {name}")
+            content = sm.registry.get_full_content(name)
+            if not content:
+                raise ValueError(f"技能正文为空: {name}")
+            parts.append(f"## 技能: {name}\n{content}")
+        return "\n\n".join(parts)
 
     def _make_router(self, router_spec: dict, branch_keys: list) -> callable:
         """构造条件边路由函数。router_spec.kind: llm / state_field。"""

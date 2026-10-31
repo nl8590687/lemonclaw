@@ -24,6 +24,9 @@ import json
 import logging
 
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
+
+from agent.workflow.context import origin_context
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +38,27 @@ def create_workflow_tools(manager) -> list:
 
     @tool
     def workflow_define(name: str, description: str, spec: str) -> str:
-        """一次性给出完整 spec 创建或更新工作流（主路径，声明式 JSON）。
+        """创建或更新可复用 Workflow，适合多阶段调查、核验汇总、长任务和周期业务处理。
+        先 workflow_list_defs 检查可复用定义，再按需定义并 workflow_execute 后台启动。
+        llm 处理已有文本；需要自主搜索/调用工具的阶段使用 subagent，并声明 tools 与 skills。
 
         spec 格式示例:
-        {"state_schema": [{"name": "input_text", "type": "str"}],
+        {"state_schema": [{"name": "input_text", "type": "str"}, {"name": "result", "type": "str"}],
          "nodes": [{"name": "step1", "kind": "llm", "config": {"prompt": "处理: {input_text}", "output_field": "result"}}],
          "edges": [{"src": "START", "dst": "step1"}, {"src": "step1", "dst": "END"}]}
 
         state_schema: [{name, type(str/int/float/bool/list/dict), reducer?(add_messages/overwrite/append)}]
+        输入字段与各节点的 output_field 均需在 state_schema 中声明。
         nodes kind: llm(prompt+output_field) / tool(tool_name+args+output_field) /
-                    subagent(type=general, system_prompt, tools=[工具名], task, output_field) /
+                    subagent(type=general, system_prompt, tools=[工具名], skills=[技能名], task, output_field) /
                     main_agent(task, output_field) / human(question, output_field) / subgraph(sub_workflow_id)
         edges: [{src, dst}]，START/END 可省略（自动补）
         conditionals: [{src, router: {kind: "state_field"|"llm", field?: "..."}, mapping: {key: target}}]
+
+        调查研究示例：state_schema 声明 topic/evidence/report 三个 str 字段；
+        collect 为 subagent（tools 选择当前可用搜索/抓取工具，task="调查 {topic}，附来源与日期"，
+        output_field="evidence"）；write 为 llm（prompt="核验并汇总 {evidence}"，output_field="report"）；
+        edges 为 START->collect->write->END。周期任务复用此定义并用 create_cron_task 绑定。
 
         Args:
             name: 工作流名称（唯一标识）
@@ -58,14 +69,18 @@ def create_workflow_tools(manager) -> list:
             spec_dict = json.loads(spec) if isinstance(spec, str) else spec
         except json.JSONDecodeError as ex:
             return f"❌ spec JSON 解析失败: {ex}"
+        if not isinstance(spec_dict, dict):
+            return "❌ spec 必须是 JSON 对象"
         wf = manager.define_workflow(name, description, spec_dict)
         if wf.last_error:
             return f"⚠️ 工作流 {wf.workflow_id} 已保存但编译失败: {wf.last_error}"
         return f"✅ 工作流 {wf.workflow_id}（v{wf.version}）已定义并编译成功"
 
     @tool
-    def workflow_execute(workflow_id: str, input: str = "{}") -> str:
-        """启动一个工作流 run（后台执行，不阻塞）。返回 run_id 与初始状态。
+    def workflow_execute(workflow_id: str, input: str = "{}", config: RunnableConfig = None) -> str:
+        """启动后台 Workflow，立即返回 run_id；适用于已编排的多阶段/长任务。
+        启动后向用户说明 run_id，后续由完成/暂停/错误事件继续处理。
+        用户询问进度时可 workflow_inspect_run；human/main_agent 暂停用 workflow_resume 回填。
 
         Args:
             workflow_id: 工作流 ID 或名称
@@ -73,22 +88,24 @@ def create_workflow_tools(manager) -> list:
         """
         try:
             input_dict = json.loads(input) if isinstance(input, str) else input
-        except json.JSONDecodeError:
-            input_dict = {}
-        run_id, info = manager.start_run(workflow_id, input_dict, {})
+        except json.JSONDecodeError as ex:
+            return f"❌ 输入 JSON 解析失败: {ex}"
+        if not isinstance(input_dict, dict):
+            return "❌ 输入必须是 JSON 对象"
+        run_id, info = manager.start_run(workflow_id, input_dict, origin_context(config))
         if run_id is None:
             return f"❌ 启动失败: {info.get('error', '未知错误')}"
         return f"✅ 工作流已启动，run_id={run_id}。运行中...（回调时会收到工作流消息）"
 
     @tool
-    def workflow_resume(run_id: str, value: str) -> str:
+    def workflow_resume(run_id: str, value: str, config: RunnableConfig = None) -> str:
         """续跑一个暂停中的工作流 run（HITL 回复 / main_agent 回填）。
 
         Args:
             run_id: 工作流 run ID
             value: 续跑值（人类回复文本或主 Agent 处理结果）
         """
-        result = manager.resume_run(run_id, value, {})
+        result = manager.resume_run(run_id, value, origin_context(config))
         if "error" in result:
             return f"❌ 续跑失败: {result['error']}"
         return f"✅ run {run_id} 已续跑，继续执行中..."
@@ -155,14 +172,14 @@ def create_workflow_tools(manager) -> list:
         return json.dumps(run, ensure_ascii=False, indent=2, default=str)
 
     @tool
-    def workflow_inject(run_id: str, message: str) -> str:
+    def workflow_inject(run_id: str, message: str, config: RunnableConfig = None) -> str:
         """向暂停的 run 注入控制消息并续跑（带控制语义的 resume）。
 
         Args:
             run_id: 工作流 run ID
             message: 控制消息
         """
-        result = manager.inject_run(run_id, message, {})
+        result = manager.inject_run(run_id, message, origin_context(config))
         if "error" in result:
             return f"❌ 注入失败: {result['error']}"
         return f"✅ run {run_id} 已注入控制消息并续跑"

@@ -333,6 +333,11 @@ A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, saf
 
 ## 🔀 Multi-Agent Workflow
 
+The main agent handles short queries directly and prefers background Workflows for multi-stage research, verification, and long tasks. Use `workflow_list_defs` to find reusable definitions; `workflow_execute` returns a run ID and follow-up events continue the interaction. Sub-agents declare `tools` and `skills`; skill bodies are included in their system prompts.
+
+Schedule a reusable definition with `create_cron_task(prompt="Daily weather report", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"Shanghai"}')`. Each trigger creates an independent run using the service's local timezone. `update_cron_task` updates the binding or inputs; `workflow_id=""` restores prompt execution.
+
+
 When `ENABLE_WORKFLOW=true` (default), LemonClaw can build and run **LangGraph-based multi-agent workflows**. The architecture features **two "in-the-loop" participants**: the **main agent** and the **human**. The main agent is not just the orchestrator who defines workflows — it is an **active participant in the loop itself**: it can be called back as a node during execution (`main_agent` nodes), inspect and control in-flight runs at any time (supervisor commands), and serve as the sole interface through which humans interact with the workflow (HITL). This is fundamentally different from a simple "workflow result callback" — **the main agent is a first-class citizen of the workflow loop, not a passive endpoint**. **`loop_forever` is never modified** — workflows and the LangGraphLoop events integrate via the existing message bus and agent tools.
 
 ### Key capabilities
@@ -340,8 +345,8 @@ When `ENABLE_WORKFLOW=true` (default), LemonClaw can build and run **LangGraph-b
 - **Main agent in the loop** vs. **Human in the loop** — two independent "loop participants":
   - **Main agent in the loop**: the main agent is an active participant. It can be called back as a `main_agent` node during execution (with full session memory and workflow tools, enabling dynamic recursion). It can also **inspect, control, and adjust** in-flight runs **at any time** — not just at predefined callback points — via supervisor commands (`/wf inspect`, `/wf inject`) and tools (`workflow_inspect_run`, `workflow_inject`). This is the "main-agent-in-the-loop", distinct from passive result delivery.
   - **Human in the loop**: `human` nodes pause execution and notify the user **through the main agent** (the main agent is the human's sole interface — humans never interact with sub-agents directly). The `run_id` is carried in the message text bidirectionally; the main agent extracts it and calls `workflow_resume(run_id, answer)`.
-- **Declarative specs** — define workflows via a single `workflow_define(name, spec)` call (JSON: `state_schema` / `nodes` / `edges` / `conditionals`). No code generation required.
-- **Sub-agents** (`subagent` nodes) — curated tools + custom system prompt, inherits nothing from the main agent. A `BaseSubAgent` + `GeneralSubAgent` hierarchy with a pluggable registry for future specialized types (browser, SSH, etc.).
+- **Declarative specs** — define workflows via a single `workflow_define(name, description, spec)` call (JSON: `state_schema` / `nodes` / `edges` / `conditionals`). No code generation required.
+- **Sub-agents** (`subagent` nodes) — curated tools, a custom system prompt, declared skills, and a fresh conversation for each run. A `BaseSubAgent` + `GeneralSubAgent` hierarchy with a pluggable registry for future specialized types (browser, SSH, etc.).
 - **Beyond DAG** — conditional edges support LLM-based and state-field routing, plus cyclic loops (with `recursion_limit` protection).
 - **Persistent execution** — runs are checkpointed via `SqliteSaver` in the single `.lemonclaw/lemonclaw.db`. Paused runs survive process restarts and can be resumed hours/days later.
 - **Background worker pool** — workflow segments execute in a bounded thread pool (`WORKFLOW_WORKER_POOL_SIZE`, default 4) so the main agent loop never blocks.
@@ -353,7 +358,7 @@ When `ENABLE_WORKFLOW=true` (default), LemonClaw can build and run **LangGraph-b
 
 ```json
 {
-  "state_schema": [{"name": "answer", "type": "str"}],
+  "state_schema": [{"name": "answer", "type": "str"}, {"name": "summary", "type": "str"}],
   "nodes": [
     {"name": "ask", "kind": "human", "config": {"question": "Please confirm the scope.", "output_field": "answer"}},
     {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "You are a summarizer.", "tools": ["web_search"], "task": "Summarize: {answer}", "output_field": "summary"}}
