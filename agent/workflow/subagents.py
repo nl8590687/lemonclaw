@@ -68,9 +68,13 @@ class BaseSubAgent:
         control = current_control()
         check_control()
         thread_id = f"sa_{self.subagent_id}_{uuid.uuid4().hex[:8]}"
+        message = HumanMessage(content=task)
+        if (context or {}).get("vision_image_ids"):
+            from agent.media.images import image_message
+            message = image_message(task, context["vision_image_ids"], context)
         try:
             result = self._agent.invoke(
-                {"messages": [HumanMessage(content=task)]},
+                {"messages": [message]},
                 config={"configurable": {"thread_id": thread_id, "origin_context": context or {}},
                         "callbacks": [ControlCallback(control)] if control else []},
             )

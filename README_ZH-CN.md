@@ -175,6 +175,24 @@ docker run -e TZ=Asia/Shanghai \
 
 模型调用通过 `LLM_API_TIMEOUT` 设置单次请求超时，`LLM_TOTAL_TIMEOUT` 限制包含重试、备用模型在内的总耗时。`LLM_MAX_RETRIES`（默认最多重试 10 次，主备模型共用预算）、`LLM_RETRY_BASE_DELAY`、`LLM_RETRY_MAX_DELAY` 控制带随机抖动的指数退避，限流时遵循 `Retry-After`。可设置 `LLM_FALLBACK_MODEL`，以及可选的 `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY`。Provider 熔断通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 与 `LLM_CIRCUIT_COOLDOWN` 配置。自动重试和切换适用于流式输出开始前的暂时性故障；失败时保留现有会话 checkpoint。总时限到达后释放调用方，已进入 SDK 的请求可能继续留在有容量上限的守护线程中直至返回。
 
+
+### 图片输入
+
+主模型支持图像输入时设置 `ENABLE_VISION=True`（默认开启）。图片保存到 `FEISHU_RECEIVED_DIR`，会话 checkpoint 保存稳定附件引用；请求模型时按原始字节编码为 Base64 Data URL。支持按实际内容校验 JPEG、PNG、GIF、WebP。应用单次请求最多 8 张图、图片原始数据合计 20 MiB，单张最多 10 MiB。纯文本请求保持现有行为。
+
+```text
+/image "/path/带空格的图片.png" /path/b.jpg -- 比较这两张图
+/image img-<编号> img-<编号> -- 比较差异
+/image all -- 描述当前暂存图片
+/upload "/path/image.png"
+```
+
+`/image` 选择本轮图片，问题前使用 `--` 分隔；`/upload` 仅保存文件并返回路径/编号。飞书单独发图后会收到编号回执；可引用该图片消息并回复问题、用 `/image` 指定编号，或在同一条富文本消息中发送文字和图片。普通后续文字沿用附件路径说明机制，暂存图片通过明确选择加入视觉输入。`/upload` 将所有暂存图片标记为仅保存，`/upload <编号...>` 仅处理指定图片。暂存选择按 `FEISHU_PENDING_FILE_TTL_SECONDS` 过期，已有历史引用仍可使用。本地路径只允许在命令行选择。
+
+备用模型支持图片时再设置 `LLM_FALLBACK_ENABLE_VISION=True`；含图请求要求备用模型具备视觉能力。关闭视觉后请求只携带图片文字引用。请保留被历史引用的文件；图片缺失、变更或超过预算时会明确报错。上下文摘要使用同一图片适配层。Workflow 的 `llm`/`subagent` 节点通过 `config.image_ids` 或 `config.image_ids_field`（list 状态字段）显式传入当前来源会话的图片编号。图片生成属于后续独立能力，现有文件发送工具继续可用。
+
+主会话沿用现有机制；若共享历史中含其他来源图片，切换来源时需使用独立 `session_key` 或 `/clear` 清理历史，否则会明确停止以避免跨来源读取图片。
+
 ---
 
 ## 📡 通道

@@ -24,6 +24,8 @@ class NodeConfig(SpecModel):
     retry_backoff: float = Field(default=1, ge=0, le=300, allow_inf_nan=False)
     on_error: Literal["fail", "continue", "compensate"] = "fail"
     compensation: dict[str, Any] | None = None
+    image_ids: list[str] = Field(default_factory=list)
+    image_ids_field: str = ""
     output_field: str | None = None
     prompt: str = ""
     tool_name: str = ""
@@ -115,6 +117,11 @@ def validate_spec(raw: dict, builder, workflow_id: str, ancestors: tuple[str, ..
         output = nc.output_field or {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(n.kind, "output")
         if n.kind != "subgraph" and output not in fields_by_name:
             raise ValueError(f"nodes.{n.name}.config.output_field: 未声明 state 字段 {output}")
+        if nc.image_ids or nc.image_ids_field:
+            if n.kind not in {"llm", "subagent"}:
+                raise ValueError(f"nodes.{n.name}.config.image_ids: 仅 llm/subagent 节点支持")
+            if nc.image_ids_field and (nc.image_ids_field not in fields_by_name or fields_by_name[nc.image_ids_field].type != "list"):
+                raise ValueError(f"nodes.{n.name}.config.image_ids_field: 必须引用 list 状态字段")
         if nc.on_error == "compensate":
             cp = nc.compensation
             if not cp or cp.get("tool_name") not in builder.tools or not isinstance(cp.get("args", {}), dict):

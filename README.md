@@ -176,6 +176,24 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 
 Model requests use `LLM_API_TIMEOUT` per request and `LLM_TOTAL_TIMEOUT` for the whole call, including retries and fallback. `LLM_MAX_RETRIES` (default 10 retries shared by primary and fallback), `LLM_RETRY_BASE_DELAY`, and `LLM_RETRY_MAX_DELAY` control exponential backoff with jitter; rate limits respect `Retry-After`. Set `LLM_FALLBACK_MODEL` and optionally `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY` for a backup. Provider circuit breakers use `LLM_CIRCUIT_FAILURE_THRESHOLD` and `LLM_CIRCUIT_COOLDOWN`. Automatic retries/fallback apply to transient failures before streaming begins. A failed request retains the existing conversation checkpoint. The total deadline releases the caller; an SDK call already in progress may finish in its bounded daemon thread.
 
+
+### Image input
+
+Set `ENABLE_VISION=True` (default) when the main model supports image input. Images are saved under `FEISHU_RECEIVED_DIR` and referenced from conversation checkpoints; their original bytes are encoded as Base64 Data URLs when making model requests. JPEG, PNG, GIF and WebP are validated by actual content. The application accepts up to 8 images and 20 MiB of image data per request, with a 10 MiB per-image limit. Plain text requests keep the existing behavior.
+
+```text
+/image "/path/first image.png" /path/second.jpg -- Compare these images
+/image img-<id> img-<id> -- Explain the difference
+/image all -- Describe the pending images
+/upload "/path/image.png"
+```
+
+`/image` selects images for the current turn; use `--` before the question. `/upload` stores files and returns their paths/IDs. On Feishu, sending an image saves it and returns an ID. Quote the image message and reply with a question, use `/image` with IDs, or send text and images together in a rich-text message. An ordinary follow-up text keeps the existing attachment-path behavior; pending images are selected explicitly for vision. `/upload` marks all pending images as storage-only; `/upload <id...>` marks just those images. Pending selections expire according to `FEISHU_PENDING_FILE_TTL_SECONDS`; saved history references remain usable. Image commands accept local paths only from the terminal.
+
+Set `LLM_FALLBACK_ENABLE_VISION=True` only if the backup model also supports images. Image requests require a vision-capable fallback. Turning vision off sends textual image references in place of image data. Keep referenced files available; changed, missing or over-budget images produce an explicit error. Context summarization uses the same image adapter. For Workflow `llm`/`subagent` nodes, set `config.image_ids` or `config.image_ids_field` (a list state field) to explicitly pass image IDs from the originating conversation. Image generation is a separate future capability; existing file-sending tools remain available.
+
+The existing shared main conversation is retained. If its history contains images from another origin, use a distinct `session_key` or `/clear` before switching origins; the agent blocks that request to avoid cross-origin image access.
+
 ---
 
 ## 📡 Channels

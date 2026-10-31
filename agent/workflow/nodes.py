@@ -60,11 +60,26 @@ def _output_field(nc: dict, default: str = "output") -> str:
     return nc.get("output_field", default)
 
 
+def _image_ids(nc, state):
+    ids = [render_template(value, state) for value in nc.get("image_ids", [])]
+    if nc.get("image_ids_field"):
+        values = (state or {}).get(nc["image_ids_field"], [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError("image_ids_field 需要图片编号列表")
+        ids.extend(values)
+    return ids
+
+
 def _llm_node(nc: dict, llm):
     """render(prompt, state) -> llm.invoke -> 写入 output_field。"""
     def fn(state, config=None):
         prompt = render_template(nc.get("prompt", ""), state)
         check_control()
+        ids = _image_ids(nc, state)
+        if ids:
+            from agent.media.images import image_message
+            context = (config or {}).get("configurable", {}).get("origin_context", {})
+            prompt = [image_message(prompt, ids, context)]
         resp = llm.invoke(prompt)
         check_control()
         content = getattr(resp, "content", str(resp))
@@ -116,7 +131,10 @@ def _subagent_node(nc: dict, manager):
     def fn(state, config=None):
         subagent_id = nc.get("subagent_id", "")
         task = render_template(nc.get("task", nc.get("task_template", "")), state)
-        context = (config or {}).get("configurable", {}).get("origin_context", {})
+        context = dict((config or {}).get("configurable", {}).get("origin_context", {}))
+        ids = _image_ids(nc, state)
+        if ids:
+            context["vision_image_ids"] = ids
         reply = manager.run_subagent_inline(subagent_id, task, context)
         return {_output_field(nc, "agent_reply"): reply}
     return fn

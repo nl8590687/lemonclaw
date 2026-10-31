@@ -102,6 +102,15 @@ def loop_forever():
 
             out_chan = get_output_channel(event_msg)
             is_terminal_event = event_msg.event_type.value == EventType.TERMINAL.value
+            from agent.media.commands import is_media_command, media_command
+            if is_media_command(msg_text):
+                question, selected, receipt = media_command(msg_text, event_msg.context)
+                if receipt is not None:
+                    out_chan.write_message(receipt, event_msg.context)
+                    continue
+                svr.run(question, event_msg.context, out_chan, attachments=selected)
+                svr.trim_msg_history()
+                continue
             if msg_text.strip().startswith("/"):
                 if not handle_command(out_chan, agent_service=svr, command=msg_text) and is_terminal_event:
                     break

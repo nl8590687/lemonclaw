@@ -64,3 +64,4 @@ websockets==15.0.1
 xxhash==4.0.2
 zhdate==0.1
 zstandard==0.25.0
+Pillow==13.0.0

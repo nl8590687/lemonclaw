@@ -50,6 +50,8 @@ def create_workflow_tools(manager) -> list:
         spec_version: 1（可省略，保存时补全）；定义期校验结构、引用和规模上限。
         state_schema: [{name, type(str/int/float/bool/list/dict), reducer?(add_messages/overwrite/append)}]
         输入字段与各节点的 output_field 均需在 state_schema 中声明。
+        llm/subagent 节点可用 config.image_ids 显式选择当前来源的图片编号，
+        或 image_ids_field 指向存放图片编号列表的 list 状态字段；图片仍遵循 ENABLE_VISION 配置。
         nodes kind: llm(prompt+output_field) / tool(tool_name+args+output_field) /
                     subagent(type=general, system_prompt, tools=[工具名], skills=[技能名], task, output_field) /
                     main_agent(task, output_field) / human(question, output_field) / subgraph(sub_workflow_id)
