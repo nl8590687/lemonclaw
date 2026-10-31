@@ -82,6 +82,29 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         self.assertIsNotNone(wf)
         self.assertIsNone(wf.last_error)
 
+    def test_invalid_definition_preserves_valid_spec(self):
+        from agent.workflow.tools import create_workflow_tools
+        original = self.mgr.define_workflow("validated", "valid", self._human_spec())
+        invalid = self._human_spec()
+        invalid["edges"] = [{"src": "missing", "dst": "ask"}]
+        failed = self.mgr.define_workflow("validated", "invalid", invalid)
+        stored = self.mgr.get_workflow("validated")
+        self.assertIn("edges", failed.last_error)
+        self.assertEqual(stored.spec, original.spec)
+        self.assertEqual(stored.version, original.version)
+        self.assertEqual(stored.last_error, failed.last_error)
+        tools = {t.name: t for t in create_workflow_tools(self.mgr)}
+        result = tools["workflow_define"].invoke({
+            "name": "bad_spec", "description": "", "spec": '{"nodes": []}'})
+        self.assertIn("定义失败", result)
+        bad = self.mgr.get_workflow("bad_spec")
+        self.assertEqual(bad.spec, {})
+        self.assertIsNotNone(bad.last_error)
+        self.assertIsNone(self.mgr.start_run("bad_spec", {}, {})[0])
+        fixed = self.mgr.define_workflow("validated", "fixed", self._human_spec())
+        self.assertIsNone(fixed.last_error)
+        self.assertEqual(fixed.spec["spec_version"], 1)
+
     def test_define_duplicate_update(self):
         wf1 = self.mgr.define_workflow("test_dup", "v1", self._human_spec())
         v1 = wf1.version

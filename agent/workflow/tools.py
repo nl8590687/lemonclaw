@@ -47,6 +47,7 @@ def create_workflow_tools(manager) -> list:
          "nodes": [{"name": "step1", "kind": "llm", "config": {"prompt": "处理: {input_text}", "output_field": "result"}}],
          "edges": [{"src": "START", "dst": "step1"}, {"src": "step1", "dst": "END"}]}
 
+        spec_version: 1（可省略，保存时补全）；定义期校验结构、引用和规模上限。
         state_schema: [{name, type(str/int/float/bool/list/dict), reducer?(add_messages/overwrite/append)}]
         输入字段与各节点的 output_field 均需在 state_schema 中声明。
         nodes kind: llm(prompt+output_field) / tool(tool_name+args+output_field) /
@@ -73,7 +74,7 @@ def create_workflow_tools(manager) -> list:
             return "❌ spec 必须是 JSON 对象"
         wf = manager.define_workflow(name, description, spec_dict)
         if wf.last_error:
-            return f"⚠️ 工作流 {wf.workflow_id} 已保存但编译失败: {wf.last_error}"
+            return f"❌ 工作流 {wf.workflow_id} 定义失败: {wf.last_error}"
         return f"✅ 工作流 {wf.workflow_id}（v{wf.version}）已定义并编译成功"
 
     @tool

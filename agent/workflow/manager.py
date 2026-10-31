@@ -107,6 +107,7 @@ class WorkflowManager:
         wf = self.dao.get_workflow_by_name(name)
         if wf is None:
             wf = self.dao.get_workflow(slug)
+        previous = (wf.spec, wf.description, wf.version) if wf is not None else None
         if wf is None:
             wf = Workflow(workflow_id=slug, name=name, description=description or "",
                           spec=spec, version=1)
@@ -121,6 +122,10 @@ class WorkflowManager:
             builder.compile(wf)
             wf.last_error = None
         except Exception as ex:
+            if previous is not None:
+                wf.spec, wf.description, wf.version = previous
+            else:
+                wf.spec = {}
             wf.last_error = str(ex)
             logger.warning("workflow %s compile failed: %s", slug, ex)
 
