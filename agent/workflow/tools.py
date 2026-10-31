@@ -61,6 +61,13 @@ def create_workflow_tools(manager) -> list:
         output_field="evidence"）；write 为 llm（prompt="核验并汇总 {evidence}"，output_field="report"）；
         edges 为 START->collect->write->END。周期任务复用此定义并用 create_cron_task 绑定。
 
+        支持并行分支：START->A，A->B、A->C，B->D、C->D，D->END。
+        B/C 为同一阶段完全独立的子任务，分别写入不同的 output_field（如 evidence_b/evidence_c），
+        D 读取两者结果后汇总。只对互不依赖、互不干扰的子任务并行；
+        涉及同一文件、数据库记录或外部资源的读写冲突时按依赖串行编排，避免竞态条件。
+        同一步并行写同一 state 字段需要适当 reducer，且合并结果不能依赖执行顺序；优先使用独立字段。
+        此示例的 B/C 在同一阶段结束后进入 D；分支深度不同时须显式设计同步汇合。
+
         Args:
             name: 工作流名称（唯一标识）
             description: 工作流描述
