@@ -57,6 +57,15 @@ class GlobalConfig(BaseSettings):
     MODEL_MAX_COMPLETION_TOKEN: int = int(os.environ.get("MODEL_MAX_COMPLETION_TOKEN", 128000))
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
     LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
+    LLM_MAX_RETRIES: int = int(os.environ.get("LLM_MAX_RETRIES", 2))
+    LLM_RETRY_BASE_DELAY: float = float(os.environ.get("LLM_RETRY_BASE_DELAY", 1))
+    LLM_RETRY_MAX_DELAY: float = float(os.environ.get("LLM_RETRY_MAX_DELAY", 30))
+    LLM_TOTAL_TIMEOUT: float = float(os.environ.get("LLM_TOTAL_TIMEOUT", 180))
+    LLM_CIRCUIT_FAILURE_THRESHOLD: int = int(os.environ.get("LLM_CIRCUIT_FAILURE_THRESHOLD", 3))
+    LLM_CIRCUIT_COOLDOWN: float = float(os.environ.get("LLM_CIRCUIT_COOLDOWN", 30))
+    LLM_FALLBACK_MODEL: str = os.environ.get("LLM_FALLBACK_MODEL", "")
+    LLM_FALLBACK_BASE_URL: str = os.environ.get("LLM_FALLBACK_BASE_URL", "")
+    LLM_FALLBACK_API_KEY: SecretStr = SecretStr(os.environ.get("LLM_FALLBACK_API_KEY", ""))
 
     # Web/HTTP 安全：私网/本地目标需当前用户 URL 授权或进入信任列表
     WEB_ACCESS_ALLOW_PRIVATE: bool = str(os.environ.get("WEB_ACCESS_ALLOW_PRIVATE", "true")).lower() == "true"

@@ -44,3 +44,4 @@ class TestCreateOpenaiLlm(unittest.TestCase):
         self.assertEqual(llm.model_name, "deepseek-v4-flash")
         self.assertEqual(llm.max_tokens, 32000)
         self.assertTrue(llm.streaming)
+        self.assertEqual(llm.max_retries, 0)
