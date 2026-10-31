@@ -174,6 +174,8 @@ All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full li
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
 | `ENABLE_WORKFLOW` / `WORKFLOW_*` | Multi-Agent Workflow: master switch, recursion limit, nesting max, node/branch limits, result truncation, worker pool size, HITL handler |
 
+Model requests use `LLM_API_TIMEOUT` per request and `LLM_TOTAL_TIMEOUT` for the whole call, including retries and fallback. `LLM_MAX_RETRIES` (default 10 retries shared by primary and fallback), `LLM_RETRY_BASE_DELAY`, and `LLM_RETRY_MAX_DELAY` control exponential backoff with jitter; rate limits respect `Retry-After`. Set `LLM_FALLBACK_MODEL` and optionally `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY` for a backup. Provider circuit breakers use `LLM_CIRCUIT_FAILURE_THRESHOLD` and `LLM_CIRCUIT_COOLDOWN`. Automatic retries/fallback apply to transient failures before streaming begins. A failed request retains the existing conversation checkpoint. The total deadline releases the caller; an SDK call already in progress may finish in its bounded daemon thread.
+
 ---
 
 ## 📡 Channels
