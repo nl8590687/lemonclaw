@@ -40,4 +40,4 @@ class WorkflowExecutor:
 
     def shutdown(self):
         """关闭线程池（不等任务完成）。"""
-        self._pool.shutdown(wait=False)
+        self._pool.shutdown(wait=False, cancel_futures=True)

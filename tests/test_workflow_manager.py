@@ -105,6 +105,40 @@ class TestManagerDefineAndRun(_TempDbTestCase):
         self.assertIsNone(fixed.last_error)
         self.assertEqual(fixed.spec["spec_version"], 1)
 
+    def test_cancel_running_keeps_checkpoint_and_status(self):
+        import threading
+        from langchain_core.tools import tool
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        @tool
+        def blocked() -> str:
+            """等待释放。"""
+            entered.set()
+            release.wait(5)
+            return "done"
+        @tool
+        def after() -> str:
+            """记录后续执行。"""
+            calls.append(1)
+            return "done"
+        self.mgr._tools_dict = {"blocked": blocked, "after": after}
+        spec = {"state_schema": {"a": "str", "b": "str"}, "nodes": [
+            {"name": "a", "kind": "tool", "config": {"tool_name": "blocked", "output_field": "a"}},
+            {"name": "b", "kind": "tool", "config": {"tool_name": "after", "output_field": "b"}}],
+            "edges": [{"src": "a", "dst": "b"}]}
+        self.mgr.define_workflow("cancel_real", "", spec)
+        run_id, _ = self.mgr.start_run("cancel_real", {}, {})
+        try:
+            self.assertTrue(entered.wait(3))
+            self.assertTrue(self.mgr.cancel_run(run_id)[0])
+            self.assertEqual(self.mgr.inspect_run(run_id)["status"], "cancelled")
+            self.assertIsNotNone(self.mgr.checkpointer.get_tuple({"configurable": {"thread_id": f"workflow:{run_id}"}}))
+        finally:
+            release.set()
+        time.sleep(.2)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.mgr.inspect_run(run_id)["status"], "cancelled")
+
     def test_define_duplicate_update(self):
         wf1 = self.mgr.define_workflow("test_dup", "v1", self._human_spec())
         v1 = wf1.version

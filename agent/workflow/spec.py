@@ -19,6 +19,11 @@ class StateField(SpecModel):
 
 
 class NodeConfig(SpecModel):
+    timeout_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
+    max_retries: int = Field(default=0, ge=0, le=10)
+    retry_backoff: float = Field(default=1, ge=0, le=300, allow_inf_nan=False)
+    on_error: Literal["fail", "continue", "compensate"] = "fail"
+    compensation: dict[str, Any] | None = None
     output_field: str | None = None
     prompt: str = ""
     tool_name: str = ""
@@ -110,6 +115,12 @@ def validate_spec(raw: dict, builder, workflow_id: str, ancestors: tuple[str, ..
         output = nc.output_field or {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(n.kind, "output")
         if n.kind != "subgraph" and output not in fields_by_name:
             raise ValueError(f"nodes.{n.name}.config.output_field: 未声明 state 字段 {output}")
+        if nc.on_error == "compensate":
+            cp = nc.compensation
+            if not cp or cp.get("tool_name") not in builder.tools or not isinstance(cp.get("args", {}), dict):
+                raise ValueError(f"nodes.{n.name}.config.compensation: 需要有效 tool_name 与 args 对象")
+        if nc.compensation and nc.on_error != "compensate":
+            raise ValueError(f"nodes.{n.name}.config.compensation: 需设置 on_error=compensate")
         if n.kind == "tool" and nc.tool_name not in builder.tools:
             raise ValueError(f"nodes.{n.name}.config.tool_name: 工具不存在 {nc.tool_name}")
         if n.kind == "subagent":

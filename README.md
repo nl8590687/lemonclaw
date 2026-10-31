@@ -333,6 +333,9 @@ A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, saf
 
 ## 🔀 Multi-Agent Workflow
 
+Node configs support `timeout_seconds` (default 300), `max_retries` (default 0), exponential `retry_backoff` (default 1 second), and `on_error` (`fail`, `continue`, or `compensate`). Compensation declares a `compensation` object with `tool_name` and `args`. Configure retries only for operations safe to repeat. Cancellation stops execution at node/model/tool boundaries and retains checkpoints. A timed-out blocking call may continue in its daemon thread; its result is discarded, further calls are blocked, and the timeout is reported without retry or compensation. Outstanding node calls are capped at 32; new nodes fail explicitly when that capacity is occupied.
+
+
 The main agent handles short queries directly and prefers background Workflows for multi-stage research, verification, and long tasks. Use `workflow_list_defs` to find reusable definitions; `workflow_execute` returns a run ID and follow-up events continue the interaction. Sub-agents declare `tools` and `skills`; skill bodies are included in their system prompts.
 
 Schedule a reusable definition with `create_cron_task(prompt="Daily weather report", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"Shanghai"}')`. Each trigger creates an independent run using the service's local timezone. `update_cron_task` updates the binding or inputs; `workflow_id=""` restores prompt execution.

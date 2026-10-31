@@ -31,6 +31,7 @@ from dao.workflow import Workflow, WorkflowRun, WorkflowDAO, ensure_workflow_sch
 from agent.workflow.builder import WorkflowBuilder
 from agent.workflow.runner import WorkflowRunner
 from agent.workflow.executor import WorkflowExecutor
+from agent.workflow.control import RunControl, _current
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class WorkflowManager:
                                      cfg.WORKFLOW_RESULT_MAX_CHARS)
         self.executor = WorkflowExecutor(cfg.WORKFLOW_WORKER_POOL_SIZE)
 
+        self._controls = {}
         self._graph_cache: dict[str, Any] = {}       # workflow_id:version -> CompiledStateGraph
         self._subagents: dict[str, Any] = {}          # workflow_id:version:node -> BaseSubAgent
         self._tools_dict: dict[str, Any] | None = None
@@ -216,30 +218,64 @@ class WorkflowManager:
         self.executor.submit(self._run_resume_task, graph, run_id, wf.workflow_id, value, run.origin_context or context or {})
         return {"status": "resuming"}
 
+    def _control(self, run_id):
+        if not hasattr(self, "_controls"):
+            self._controls = {}
+        return self._controls.setdefault(run_id, RunControl())
+
     def _run_invoke_task(self, graph, run_id, workflow_id, input, context):
+        control = self._control(run_id)
+        control_token = _current.set(control)
+        run = self.dao.get_run(run_id)
+        if run and run.status == "cancelled":
+            control.cancelled.set()
         token = begin_feishu_turn(context)
         try:
             result = self.runner.invoke(graph, run_id, workflow_id, input, context, self.dao)
-            self._update_run_from_result(run_id, result, workflow_id)
+            with control.lock:
+                if not control.cancelled.is_set():
+                    self._update_run_from_result(run_id, result, workflow_id)
         except Exception as ex:
             logger.exception("invoke task failed: %s", run_id)
-            self.dao.update_run_status(run_id, "error", error=str(ex))
+            with control.lock:
+                if not control.cancelled.is_set():
+                    self.dao.update_run_status(run_id, "error", error=str(ex))
         finally:
             reset_feishu_turn(token)
+            _current.reset(control_token)
+            if self._controls.get(run_id) is control:
+                self._controls.pop(run_id, None)
 
     def _run_resume_task(self, graph, run_id, workflow_id, value, context):
+        control = self._control(run_id)
+        control_token = _current.set(control)
+        run = self.dao.get_run(run_id)
+        if run and run.status == "cancelled":
+            control.cancelled.set()
         token = begin_feishu_turn(context)
         try:
             result = self.runner.resume(graph, run_id, workflow_id, value, context)
-            self._update_run_from_result(run_id, result, workflow_id)
+            with control.lock:
+                if not control.cancelled.is_set():
+                    self._update_run_from_result(run_id, result, workflow_id)
         except Exception as ex:
             logger.exception("resume task failed: %s", run_id)
-            self.dao.update_run_status(run_id, "error", error=str(ex))
+            with control.lock:
+                if not control.cancelled.is_set():
+                    self.dao.update_run_status(run_id, "error", error=str(ex))
         finally:
             reset_feishu_turn(token)
+            _current.reset(control_token)
+            if self._controls.get(run_id) is control:
+                self._controls.pop(run_id, None)
 
     def _update_run_from_result(self, run_id, result, workflow_id):
+        run = self.dao.get_run(run_id)
+        if run is not None and run.status == "cancelled":
+            return
         status = result.get("status", "error")
+        if status == "cancelled":
+            return
         if status == "paused":
             self.dao.update_run_status(run_id, "paused",
                                        loop_kind=result.get("loop_kind"),
@@ -302,7 +338,13 @@ class WorkflowManager:
             return False, "run 不存在"
         if run.status in ("completed", "cancelled"):
             return False, f"run 已 {run.status}"
-        self.dao.update_run_status(run_id, "cancelled", completed_at=datetime.now())
+        control = self._control(run_id)
+        with control.lock:
+            latest = self.dao.get_run(run_id)
+            if latest is None or latest.status in ("completed", "cancelled"):
+                return False, "run 已结束或不存在"
+            control.cancelled.set()
+            self.dao.update_run_status(run_id, "cancelled", completed_at=datetime.now())
         return True, "已取消"
 
     def list_runs(self, workflow_id: str | None = None, status: str | None = None,

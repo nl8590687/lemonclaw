@@ -31,6 +31,7 @@ from langgraph.types import StateT
 from agent.workflow.state import build_state_schema, render_template
 from agent.workflow.nodes import make_node
 from agent.workflow.subagents import GeneralSubAgent, get_subagent_class
+from agent.workflow.control import controlled_node, check_control
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,12 @@ class WorkflowBuilder:
                 self._build_subagent(sa_id, nc, name)
 
             fn = make_node(kind, nc, self.llm, self.tools, self.manager)
-            g.add_node(name, fn)
+            policy = dict(nc, kind=kind)
+            compensation = None
+            if nc.get("on_error") == "compensate":
+                output = nc.get("output_field", {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(kind, "output"))
+                compensation = make_node("tool", dict(nc["compensation"], output_field=output, max_retries=0), self.llm, self.tools, self.manager)
+            g.add_node(name, controlled_node(fn, policy, name, compensation))
 
         # 3. 边
         for ed in edges_spec:
@@ -96,7 +102,8 @@ class WorkflowBuilder:
             # mapping 的 value 可能是 END
             resolved_mapping = {k: (END if v == "END" else v) for k, v in mapping.items()}
             router_fn = self._make_router(router_spec, list(resolved_mapping.keys()))
-            g.add_conditional_edges(src, router_fn, resolved_mapping)
+            router = controlled_node(lambda state, config, fn=router_fn: fn(state), {}, f"{src}-router")
+            g.add_conditional_edges(src, router, resolved_mapping)
 
         # 5. 编译
         return g.compile(checkpointer=self.checkpointer)
@@ -224,7 +231,9 @@ class WorkflowBuilder:
                     f"状态: {state}\n只返回其中一个分支名，不要其他内容。"
                 )
                 try:
+                    check_control()
                     resp = self.llm.invoke(prompt)
+                    check_control()
                     choice = getattr(resp, "content", str(resp)).strip()
                     # 取第一个匹配的 key
                     for k in branch_keys:
