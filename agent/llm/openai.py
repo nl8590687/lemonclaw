@@ -36,6 +36,8 @@ def create_openai_llm() -> ChatOpenAI:
     )
     llm = ReliableChatOpenAI(
         **options,
+        vision_enabled=global_config.ENABLE_VISION,
+        fallback_vision_enabled=global_config.LLM_FALLBACK_ENABLE_VISION,
         retry_count=global_config.LLM_MAX_RETRIES,
         retry_base_delay=global_config.LLM_RETRY_BASE_DELAY,
         retry_max_delay=global_config.LLM_RETRY_MAX_DELAY,

@@ -31,6 +31,8 @@ def _print_help(out_chan: BaseOutChannel):
     table.add_row("/clear", "清空对话历史")
     table.add_row("/tokens", "查看累计 Token 用量")
     table.add_row("/help", "显示本帮助")
+    table.add_row("/image <编号或路径...|all> -- 问题", "选择图片加入本轮视觉上下文")
+    table.add_row("/upload [编号或路径...]", "仅保存附件")
     table.add_row("")
     table.add_row("[bold cyan]核心记忆[/]", "")
     table.add_row("/memory", "列出全部核心记忆")

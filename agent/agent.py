@@ -64,6 +64,8 @@ def format_attachment_message(attachments: list[dict[str, Any]] | None) -> str:
         path = attachment.get("path")
         if path:
             lines.append(f"收到用户发来的{kind}：文件路径：{path}")
+            if attachment.get("vision_error"):
+                lines.append(f"图片未加入视觉上下文：{attachment['vision_error']}")
         else:
             error = attachment.get("error") or "下载失败"
             lines.append(f"收到用户发来的{kind}：下载失败（{error}）")
@@ -125,23 +127,32 @@ class AgentService:
         """
         out_chan = out_chan or self.default_out_chan
         self.session_id = session_key or context.get("session_key") or "session-default"
-        if self._has_interrupted_turn():
+        state = self.agent.get_state(self._thread_config()) if hasattr(self, "checkpointer") else None
+        if self._has_interrupted_turn(state):
             out_chan.write_system_error(
                 "上轮执行已中断，工具可能已产生副作用，未自动重试。"
                 "请先核实执行结果，再用 /clear 清理中断状态并重新提交请求。"
             )
             return None
+        if state is not None and getattr(get_global_config(), 'ENABLE_VISION', True):
+            from agent.media.images import check_image_scope
+            check_image_scope((state.values or {}).get('messages', []), context)
         callback = StreamingCallback(out_chan)
-        turn_token = begin_user_turn(input_msg)
-        feishu_token = begin_feishu_turn(context)
         messages: list[BaseMessage] = []
         attachment_note = format_attachment_message(attachments)
         if attachment_note:
             messages.append(HumanMessage(content=attachment_note))
-        if input_msg.strip():
+        selected = [item['attachment_id'] for item in (attachments or [])
+                    if isinstance(item, dict) and item.get('vision_selected') and item.get('attachment_id')]
+        if selected and getattr(get_global_config(), 'ENABLE_VISION', True):
+            from agent.media.images import image_message
+            messages.append(image_message(input_msg, selected, context))
+        elif input_msg.strip():
             messages.append(HumanMessage(content=input_msg))
         if not messages:
             messages.append(HumanMessage(content=input_msg))
+        turn_token = begin_user_turn(input_msg)
+        feishu_token = begin_feishu_turn(context)
         try:
             result = self.agent.invoke(
                 {
@@ -163,6 +174,12 @@ class AgentService:
         finally:
             reset_feishu_turn(feishu_token)
             reset_user_turn(turn_token)
+        if selected:
+            from dao.attachment import AttachmentDAO
+            AttachmentDAO().mark(selected, context, "selected")
+            if context.get("source") == "feishu":
+                from channels.device.feishu import discard_pending_images
+                discard_pending_images(context.get("open_id"), context.get("chat_id"), selected)
         self._update_stats(callback)
         context["tokens"] = callback.tokens
         context["context_tokens"] = self.stats.get("context_tokens", {})

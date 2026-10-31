@@ -428,6 +428,16 @@ def pop_pending_attachments(open_id: str | None, chat_id: str | None) -> list[di
     return items
 
 
+def discard_pending_images(open_id, chat_id, ids=None):
+    """移除已显式处理的暂存项；其他待选附件继续保留。"""
+    items = load_pending_attachments(open_id, chat_id)
+    remaining = [item for item in items if ids is not None and item.get('attachment_id') not in ids]
+    if remaining:
+        set_state(_pending_key(open_id, chat_id), json.dumps(remaining, ensure_ascii=False))
+    else:
+        delete_state(_pending_key(open_id, chat_id))
+
+
 def _parse_post_block(block: dict[str, Any]) -> tuple[str, list[str], list[str]]:
     """解析单个 post 内容块（title + content 行）。"""
     rows = block.get("content")
@@ -685,6 +695,38 @@ class FeishuClient:
                 ],
             }
 
+            from agent.media.images import register_image
+            from dao.attachment import AttachmentDAO
+            registered = []
+            for index, attachment in enumerate(attachments):
+                if attachment.get('type') == 'image' and attachment.get('path'):
+                    try:
+                        attachment = register_image(attachment, context, index)
+                    except (ValueError, OSError) as ex:
+                        attachment = dict(attachment, vision_error=str(ex))
+                registered.append(attachment)
+            attachments = registered
+            image_items = [item for item in attachments if item.get('attachment_id')]
+            if image_items:
+                receipt = '已保存图片：\n' + '\n'.join(f"{item['attachment_id']} {item['name']}" for item in image_items)
+                receipt += '\n引用图片并回复问题，或 /image <编号...|all> -- 问题；/upload 仅保存'
+                self._image_receipt(user_open_id, receipt)
+            parent_id = getattr(message, 'parent_id', None)
+            if isinstance(parent_id, str) and parent_id and user_text.strip() and not user_text.strip().startswith('/'):
+                try:
+                    quoted = self._quoted_images(parent_id, context)
+                except Exception:
+                    self._image_receipt(user_open_id, '引用消息暂时无法读取；可使用 /image 指定图片编号，本轮继续处理文字')
+                    user_text += '\n[附件说明：被引用消息未加载，本轮未附加其中的图片。]'
+                    quoted = []
+                attachments = [dict(item, vision_selected=True) for item in quoted] + attachments
+            if message_type == 'post' and user_text.strip() and not user_text.strip().startswith('/'):
+                attachments = [dict(item, vision_selected=True) if item.get('attachment_id') else item for item in attachments]
+            if user_text.strip().lower() == '/upload' and attachments:
+                ids = [item['attachment_id'] for item in attachments if item.get('attachment_id')]
+                AttachmentDAO().mark(ids, context, 'stored')
+                self._image_receipt(user_open_id, '本条消息附件已保存，未加入视觉上下文')
+                return
             if not user_text.strip() and not attachments:
                 if lark:
                     lark.logger.warning(
@@ -715,6 +757,41 @@ class FeishuClient:
         except Exception as e:  # pragma: no cover
             if lark:
                 lark.logger.error(f"处理飞书消息异常: {e}")
+
+    def _image_receipt(self, open_id, text):
+        try:
+            self.sender.send_text(open_id, text)
+        except Exception:
+            if lark:
+                lark.logger.warning('图片回执发送失败，继续处理接收消息')
+
+    def _quoted_images(self, parent_id, context):
+        """解析用户显式引用的图片消息，先查本地登记再按消息 ID 获取。"""
+        from dao.attachment import AttachmentDAO
+        from agent.media.images import register_image
+        dao = AttachmentDAO()
+        items = dao.for_message(parent_id, context)
+        if items:
+            return items
+        from lark_oapi.api.im.v1 import GetMessageRequest
+        response = self.sender.client.im.v1.message.get(GetMessageRequest.builder().message_id(parent_id).build())
+        if not response.success():
+            raise ValueError('无法读取被引用图片，请使用已接收的图片编号')
+        messages = getattr(response.data, 'items', None) or []
+        target = next((item for item in messages if item.message_id == parent_id), None)
+        if target is None or target.chat_id != context['chat_id']:
+            raise ValueError('被引用消息不属于当前聊天')
+        content = json.loads(target.body.content)
+        if target.msg_type == 'image':
+            keys = [content['image_key']]
+        elif target.msg_type == 'post':
+            _, keys, _ = extract_post_content(content)
+        else:
+            return []
+        if not keys:
+            raise ValueError('被引用消息没有图片')
+        return [register_image(self._download_and_save_attachment('image', {'image_key': key}, parent_id), context, i)
+                for i, key in enumerate(keys)]
 
     # ---- 生命周期 ----
 

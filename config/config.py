@@ -52,6 +52,8 @@ class GlobalConfig(BaseSettings):
     """
     OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "")
     OPENAI_API_KEY: SecretStr = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
+    ENABLE_VISION: bool = str(os.environ.get("ENABLE_VISION", "true")).lower() == "true"
+    LLM_FALLBACK_ENABLE_VISION: bool = str(os.environ.get("LLM_FALLBACK_ENABLE_VISION", "false")).lower() == "true"
     MODEL_NAME: str = os.environ.get("MODEL_NAME", "")
     MODEL_CONTEXT_LENGTH: int = int(os.environ.get("MODEL_CONTEXT_LENGTH", 128000))
     MODEL_MAX_COMPLETION_TOKEN: int = int(os.environ.get("MODEL_MAX_COMPLETION_TOKEN", 128000))
