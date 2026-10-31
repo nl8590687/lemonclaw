@@ -332,6 +332,11 @@ metadata:
 
 ## 🔀 多 Agent 工作流
 
+简单查询由主 Agent 直接完成；多阶段调查、核验汇总和长任务优先使用后台 Workflow。使用 `workflow_list_defs` 检查可复用定义，`workflow_execute` 启动后返回 run_id，后续由事件回调继续处理。子 Agent 通过 `tools` 和 `skills` 声明所需工具及技能，技能正文进入其 system prompt。
+
+周期业务可用 `create_cron_task(prompt="每日天气报告", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"上海"}')` 绑定已定义的可复用 Workflow。每次触发创建独立 run，计划使用服务本地时区。`update_cron_task` 可更新绑定及输入，`workflow_id=""` 恢复提示词任务。
+
+
 当 `ENABLE_WORKFLOW=true`（默认）时，LemonClaw 可构建并运行**基于 LangGraph 的多 Agent 工作流**。架构中设计了**两个"在回路中"的参与者**：**主 Agent** 和**人**。主 Agent 不仅是定义工作流的编排者——它**自身也是回路中的积极参与者**：可作为节点在流程执行中被回调（`main_agent` 节点）、随时监督检查和控制调整在途 run（监督命令）、同时作为人介入工作流的唯一界面（HITL 经主 Agent 通知与恢复）。这与简单的"工作流结果回调"有本质区别——**主 Agent 是工作流回路中的一等公民，而非被动终端**。**`loop_forever` 不做任何改动**——工作流与 LangGraphLoop 事件通过既有消息总线与 Agent 工具接入。
 
 ### 核心能力
@@ -339,8 +344,8 @@ metadata:
 - **主 Agent 在回路** vs. **人在回路** — 两个独立的"回路参与者"：
   - **主 Agent 在回路**：主 Agent 是回路中的积极参与者。它可作为 `main_agent` 节点在流程执行中被回调（带完整会话记忆与工作流工具，实现动态递归）；也可**随时监督检查和控制调整**在途 run——不限于预定义回调点——通过监督命令（`/wf inspect`、`/wf inject`）与工具（`workflow_inspect_run`、`workflow_inject`）。这是"主 Agent 在回路中"，区别于被动的结果投递。
   - **人在回路**：`human` 节点暂停执行，**通过主 Agent** 通知用户（主 Agent 是人介入工作流的唯一界面——人不与子 Agent 直接交互，不"越级"）。`run_id` 在消息文本中双向携带；主 Agent 提取后调 `workflow_resume(run_id, 答复)` 续跑。
-- **声明式 spec** — 通过单次 `workflow_define(name, spec)` 调用定义工作流（JSON：`state_schema` / `nodes` / `edges` / `conditionals`），无需代码生成。
-- **子 Agent**（`subagent` 节点）— 裁剪的工具集 + 自定义系统提示，不继承主 Agent 配置。`BaseSubAgent` + `GeneralSubAgent` 体系 + 可插拔注册表，后续可接入专用 SubAgent（浏览器操作、SSH 等）。
+- **声明式 spec** — 通过单次 `workflow_define(name, description, spec)` 调用定义工作流（JSON：`state_schema` / `nodes` / `edges` / `conditionals`），无需代码生成。
+- **子 Agent**（`subagent` 节点）— 声明工具集、系统提示与技能，每次执行使用独立会话。`BaseSubAgent` + `GeneralSubAgent` 体系 + 可插拔注册表，后续可接入专用 SubAgent（浏览器操作、SSH 等）。
 - **超越 DAG** — 条件边支持 LLM 路由与状态字段路由，同时支持回环（`recursion_limit` 保护）。
 - **持久化执行** — run 通过 `SqliteSaver` checkpoint 到唯一 `.lemonclaw/lemonclaw.db`。暂停的 run 跨进程重启仍可续跑（数小时/数天后）。
 - **后台 Worker 池** — 工作流分段在有界线程池中执行（`WORKFLOW_WORKER_POOL_SIZE`，默认 4），主 Agent 循环永不阻塞。
@@ -352,7 +357,7 @@ metadata:
 
 ```json
 {
-  "state_schema": [{"name": "answer", "type": "str"}],
+  "state_schema": [{"name": "answer", "type": "str"}, {"name": "summary", "type": "str"}],
   "nodes": [
     {"name": "ask", "kind": "human", "config": {"question": "请确认搜索范围。", "output_field": "answer"}},
     {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "你是一个摘要员。", "tools": ["web_search"], "task": "总结：{answer}", "output_field": "summary"}}

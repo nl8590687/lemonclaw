@@ -20,6 +20,7 @@
 持有 SqliteSaver（持久 checkpointer）、WorkflowBuilder、WorkflowRunner、WorkflowExecutor。
 """
 
+import copy
 import logging
 import re
 import uuid
@@ -30,6 +31,7 @@ from dao.workflow import Workflow, WorkflowRun, WorkflowDAO, ensure_workflow_sch
 from agent.workflow.builder import WorkflowBuilder
 from agent.workflow.runner import WorkflowRunner
 from agent.workflow.executor import WorkflowExecutor
+from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +68,13 @@ class WorkflowManager:
     # ---- tools（延迟，避免循环初始化）----
 
     def _get_tools_dict(self) -> dict:
-        """主 Agent 工具注册表（剔除 workflow_*，供 SubAgent 裁剪选取）。"""
+        """后台工具注册表；技能通过节点的 skills 声明。"""
         if self._tools_dict is None:
             from agent.tools import create_tool_list
             tools = create_tool_list()  # 此时 manager 已初始化，无递归
-            self._tools_dict = {t.name: t for t in tools if not t.name.startswith("workflow_")}
+            self._tools_dict = {t.name: t for t in tools
+                                if not t.name.startswith("workflow_")
+                                and t.name not in {"load_skill", "unload_skill"}}
         return self._tools_dict
 
     def _make_builder(self) -> WorkflowBuilder:
@@ -204,24 +208,30 @@ class WorkflowManager:
         except Exception as ex:
             return {"error": f"编译失败: {ex}"}
 
-        self.executor.submit(self._run_resume_task, graph, run_id, wf.workflow_id, value, context or {})
+        self.executor.submit(self._run_resume_task, graph, run_id, wf.workflow_id, value, run.origin_context or context or {})
         return {"status": "resuming"}
 
     def _run_invoke_task(self, graph, run_id, workflow_id, input, context):
+        token = begin_feishu_turn(context)
         try:
             result = self.runner.invoke(graph, run_id, workflow_id, input, context, self.dao)
             self._update_run_from_result(run_id, result, workflow_id)
         except Exception as ex:
             logger.exception("invoke task failed: %s", run_id)
             self.dao.update_run_status(run_id, "error", error=str(ex))
+        finally:
+            reset_feishu_turn(token)
 
     def _run_resume_task(self, graph, run_id, workflow_id, value, context):
+        token = begin_feishu_turn(context)
         try:
             result = self.runner.resume(graph, run_id, workflow_id, value, context)
             self._update_run_from_result(run_id, result, workflow_id)
         except Exception as ex:
             logger.exception("resume task failed: %s", run_id)
             self.dao.update_run_status(run_id, "error", error=str(ex))
+        finally:
+            reset_feishu_turn(token)
 
     def _update_run_from_result(self, run_id, result, workflow_id):
         status = result.get("status", "error")
@@ -265,6 +275,12 @@ class WorkflowManager:
         agent = self._subagents.get(subagent_id)
         if agent is None:
             return f"❌ SubAgent 不存在: {subagent_id}"
+        if getattr(agent, 'workflow_skills', ()):
+            # 每次执行使用当前可用技能正文，运行实例独立持有 system 指令。
+            agent = copy.copy(agent)
+            text = self._make_builder()._resolve_skills(agent.workflow_skills)
+            agent.system_prompt = agent.workflow_base_prompt + "\n\n" + text
+            agent._agent = agent.build()
         return agent.run(task, context)
 
     # ---- 监督 ----

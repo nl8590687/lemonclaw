@@ -96,7 +96,7 @@ def _tool_node(nc: dict, tools: dict):
                     return v
             args = {k: _render_value(v, state) for k, v in args.items()}
         try:
-            result = tool.invoke(args) if args else tool.invoke({})
+            result = tool.invoke(args or {}, config=config)
             return {_output_field(nc, "output"): str(result)}
         except Exception as ex:
             logger.exception("tool_node %s failed", tool_name)
@@ -109,7 +109,8 @@ def _subagent_node(nc: dict, manager):
     def fn(state, config=None):
         subagent_id = nc.get("subagent_id", "")
         task = render_template(nc.get("task", nc.get("task_template", "")), state)
-        reply = manager.run_subagent_inline(subagent_id, task)
+        context = (config or {}).get("configurable", {}).get("origin_context", {})
+        reply = manager.run_subagent_inline(subagent_id, task, context)
         return {_output_field(nc, "agent_reply"): reply}
     return fn
 

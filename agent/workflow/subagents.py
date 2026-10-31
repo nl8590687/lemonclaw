@@ -68,7 +68,7 @@ class BaseSubAgent:
         try:
             result = self._agent.invoke(
                 {"messages": [HumanMessage(content=task)]},
-                config={"configurable": {"thread_id": thread_id}},
+                config={"configurable": {"thread_id": thread_id, "origin_context": context or {}}},
             )
             msgs = result.get("messages", [])
             if msgs and isinstance(msgs[-1], AIMessage):

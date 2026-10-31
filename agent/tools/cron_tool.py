@@ -26,6 +26,9 @@ Cron 定时任务管理工具集
 """
 from typing import Any, Dict, Optional, Type
 from langchain_core.tools import BaseTool
+from langchain_core.runnables import RunnableConfig
+
+from agent.workflow.context import origin_context
 from pydantic import BaseModel, Field, PrivateAttr
 
 # 导入 cron 模块
@@ -41,9 +44,11 @@ class ListCronTasksInput(BaseModel):
 
 class CreateCronTaskInput(BaseModel):
     """创建 Cron 任务工具的输入"""
-    prompt: str = Field(..., description="任务触发时发送给 AI Agent 的提示词")
+    prompt: str = Field(..., description="普通任务的执行提示词；绑定 Workflow 时作为任务说明")
     cron_expression: str = Field(..., description="Cron 表达式，格式为 '分 时 日 月 周'，例如 '* * * * *' 表示每分钟执行")
     enabled: bool = Field(default=True, description="是否立即启用，默认True")
+    workflow_id: str = Field(default="", description="周期业务使用的可复用 Workflow ID 或名称")
+    workflow_input: str = Field(default="{}", description="Workflow 输入参数，JSON 对象字符串")
 
 
 class UpdateCronTaskInput(BaseModel):
@@ -52,6 +57,8 @@ class UpdateCronTaskInput(BaseModel):
     prompt: Optional[str] = Field(default=None, description="新的提示词，不修改则留空")
     cron_expression: Optional[str] = Field(default=None, description="新的Cron表达式，不修改则留空")
     enabled: Optional[bool] = Field(default=None, description="是否启用，不修改则留空")
+    workflow_id: Optional[str] = Field(default=None, description="新的 Workflow ID；空字符串解除绑定")
+    workflow_input: Optional[str] = Field(default=None, description="新的 Workflow 输入，JSON 对象字符串")
 
 
 class DeleteCronTaskInput(BaseModel):
@@ -72,6 +79,22 @@ class DisableCronTaskInput(BaseModel):
 class GetCronTaskInput(BaseModel):
     """获取 Cron 任务详情工具的输入"""
     task_id: str = Field(..., description="要查看的任务ID")
+
+
+def _workflow_binding(workflow_id: str, workflow_input: str) -> dict:
+    """校验周期 Workflow 并规范化持久绑定。"""
+    import json
+    from agent.workflow import get_workflow_manager
+    manager = get_workflow_manager()
+    if manager is None:
+        raise ValueError("Workflow 未启用")
+    wf = manager.get_workflow(workflow_id)
+    if wf is None or not wf.enabled or wf.last_error or (wf.spec or {}).get("one_shot"):
+        raise ValueError("请选择存在、启用且编译成功的可复用 Workflow")
+    data = json.loads(workflow_input)
+    if not isinstance(data, dict):
+        raise ValueError("workflow_input 必须是 JSON 对象")
+    return {"workflow_id": wf.workflow_id, "workflow_input": data}
 
 
 # ==================== 工具实现 ====================
@@ -112,6 +135,7 @@ class ListCronTasksTool(BaseTool):
 执行计划: {task.cron_expression}
 最后执行: {last_run}
 提示词: {task.prompt[:100]}{"..." if len(task.prompt) > 100 else ""}
+Workflow: {task.metadata.get("workflow_id") or "普通提示词任务"}
 """)
             return "\n".join(result)
         except Exception as e:
@@ -122,7 +146,9 @@ class CreateCronTaskTool(BaseTool):
     """创建 Cron 定时任务的工具"""
 
     name: str = "create_cron_task"
-    description: str = """创建一个新的 Cron 定时任务。任务触发时，会自动将指定的提示词发送给 AI Agent 执行。
+    description: str = """创建 Cron 任务。简单提醒使用 prompt；周期采集/分析/报告填写 workflow_id 与 workflow_input。
+绑定 Workflow 后每次触发直接后台启动新的 run，复用编排并查询当次数据。
+执行时间使用当前服务本地时区。
 
 Cron 表达式格式: 分 时 日 月 周
 - * * * * * 每分钟执行
@@ -150,14 +176,19 @@ Cron 表达式格式: 分 时 日 月 周
         super().__init__(*args, **kwargs)
         self._manager = manager
 
-    def _run(self, prompt: str, cron_expression: str, enabled: bool = True, *args, **kwargs) -> str:
+    def _run(self, prompt: str, cron_expression: str, enabled: bool = True, *args,
+             workflow_id: str = "", workflow_input: str = "{}", config: RunnableConfig = None, **kwargs) -> str:
         """执行创建任务"""
         try:
+            metadata = _workflow_binding(workflow_id, workflow_input) if workflow_id else {}
+            if metadata:
+                metadata["origin_context"] = origin_context(config)
             task = self._manager.create_task(
                 prompt=prompt,
                 prompt_original=prompt,
                 cron_expression=cron_expression,
-                enabled=enabled
+                enabled=enabled,
+                metadata=metadata,
             )
             if task:
                 return f"✅ 任务创建成功！任务ID: {task.task_id}, 执行计划: {task.cron_expression}"
@@ -171,7 +202,8 @@ class UpdateCronTaskTool(BaseTool):
     """更新 Cron 定时任务的工具"""
 
     name: str = "update_cron_task"
-    description: str = """更新已有的 Cron 定时任务。可以修改提示词、执行计划、启用/禁用状态。"""
+    description: str = """更新 Cron 任务的提示词、计划、状态或 Workflow 绑定。
+workflow_id 空字符串解除绑定；省略则保留；workflow_input 更新业务输入。"""
     args_schema: Type[BaseModel] = UpdateCronTaskInput
 
     _manager: CronTaskManager = PrivateAttr()
@@ -180,14 +212,35 @@ class UpdateCronTaskTool(BaseTool):
         super().__init__(*args, **kwargs)
         self._manager = manager
 
-    def _run(self, task_id: str, prompt: Optional[str] = None, cron_expression: Optional[str] = None, enabled: Optional[bool] = None, *args, **kwargs) -> str:
+    def _run(self, task_id: str, prompt: Optional[str] = None, cron_expression: Optional[str] = None,
+             enabled: Optional[bool] = None, *args, workflow_id: Optional[str] = None,
+             workflow_input: Optional[str] = None, config: RunnableConfig = None, **kwargs) -> str:
         """执行更新任务"""
         try:
+            metadata = None
+            if workflow_id is not None or workflow_input is not None:
+                existing = self._manager.get_task(task_id)
+                if existing is None:
+                    return f"❌ 任务不存在: {task_id}"
+                metadata = dict(existing.metadata)
+                target = workflow_id if workflow_id is not None else metadata.get("workflow_id", "")
+                if target:
+                    import json
+                    data = workflow_input if workflow_input is not None else json.dumps(metadata.get("workflow_input", {}))
+                    metadata.update(_workflow_binding(target, data))
+                    if not metadata.get("origin_context"):
+                        metadata["origin_context"] = origin_context(config)
+                elif workflow_id == "":
+                    for key in ("workflow_id", "workflow_input", "origin_context"):
+                        metadata.pop(key, None)
+                else:
+                    raise ValueError("请先指定 workflow_id")
             task = self._manager.update_task(
                 task_id=task_id,
                 prompt=prompt,
                 cron_expression=cron_expression,
-                enabled=enabled
+                enabled=enabled,
+                metadata=metadata,
             )
             if task:
                 return f"✅ 任务更新成功！任务ID: {task_id}"
@@ -302,6 +355,8 @@ class GetCronTaskTool(BaseTool):
 创建时间: {created_at}
 最后更新: {updated_at}
 最后执行: {last_run}
+Workflow: {task.metadata.get("workflow_id") or "普通提示词任务"}
+Workflow 输入: {task.metadata.get("workflow_input", {})}
 
 完整提示词:
 {task.prompt}

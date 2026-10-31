@@ -24,7 +24,7 @@ from channels.ins.base import BaseInChannel
 
 class CrontabInput(BaseInChannel):
     """
-    Cron 定时任务输入通道
+    Cron 输入：绑定的 Workflow 后台启动，提示词任务投递消息总线。
     """
 
     def __init__(self):
@@ -37,6 +37,21 @@ class CrontabInput(BaseInChannel):
         self.manager.start()
 
     def _write_message(self, msg: str, img_urls: list[str] | None = None, context: dict[str, object] = None) -> str:
+        if context and context.get("workflow_id"):
+            from agent.workflow import get_workflow_manager
+            manager = get_workflow_manager()
+            if manager is None:
+                raise ValueError("Workflow 未启用")
+            wf = manager.get_workflow(context["workflow_id"])
+            if wf is None or (wf.spec or {}).get("one_shot"):
+                raise ValueError("周期任务需要可复用的 Workflow 定义")
+            from agent.workflow.context import origin_context
+            origin = origin_context({"configurable": {"origin_context": context.get("origin_context", {})}})
+            origin.update({key: context[key] for key in ("task_id", "cron_expression") if key in context})
+            run_id, info = manager.start_run(wf.workflow_id, context.get("workflow_input", {}), origin)
+            if run_id is None:
+                raise ValueError(f"启动周期 Workflow 失败: {info.get('error')}")
+            return run_id
         bus = get_bus()
         if not context:
             context = {}

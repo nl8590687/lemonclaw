@@ -26,7 +26,7 @@ class FakeLLM:
 
 class FakeTool:
     name = "test_tool"
-    def invoke(self, args):
+    def invoke(self, args, config=None):
         return f"called with {args}"
 
 
