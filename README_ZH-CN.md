@@ -173,7 +173,7 @@ docker run -e TZ=Asia/Shanghai \
 | `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
 | `ENABLE_WORKFLOW` / `WORKFLOW_*` | 多 Agent 工作流：总开关、递归上限、嵌套上限、节点/分支上限、结果截断、Worker 池大小、HITL handler |
 
-模型调用通过 `LLM_API_TIMEOUT` 设置单次请求超时，`LLM_TOTAL_TIMEOUT` 限制包含重试、备用模型在内的总耗时。`LLM_MAX_RETRIES`、`LLM_RETRY_BASE_DELAY`、`LLM_RETRY_MAX_DELAY` 控制带随机抖动的指数退避，限流时遵循 `Retry-After`。可设置 `LLM_FALLBACK_MODEL`，以及可选的 `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY`。Provider 熔断通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 与 `LLM_CIRCUIT_COOLDOWN` 配置。自动重试和切换适用于流式输出开始前的暂时性故障；失败时保留现有会话 checkpoint。总时限到达后释放调用方，已进入 SDK 的请求可能继续留在有容量上限的守护线程中直至返回。
+模型调用通过 `LLM_API_TIMEOUT` 设置单次请求超时，`LLM_TOTAL_TIMEOUT` 限制包含重试、备用模型在内的总耗时。`LLM_MAX_RETRIES`（默认最多重试 10 次，主备模型共用预算）、`LLM_RETRY_BASE_DELAY`、`LLM_RETRY_MAX_DELAY` 控制带随机抖动的指数退避，限流时遵循 `Retry-After`。可设置 `LLM_FALLBACK_MODEL`，以及可选的 `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY`。Provider 熔断通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 与 `LLM_CIRCUIT_COOLDOWN` 配置。自动重试和切换适用于流式输出开始前的暂时性故障；失败时保留现有会话 checkpoint。总时限到达后释放调用方，已进入 SDK 的请求可能继续留在有容量上限的守护线程中直至返回。
 
 ---
 

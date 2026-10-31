@@ -162,7 +162,7 @@ def bounded_call(factory, deadline):
 
 class ReliableChatOpenAI(ChatOpenAI):
     """保留 ChatOpenAI 的工具绑定、消息和 token usage 接口。"""
-    retry_count: int = Field(default=2, ge=0)
+    retry_count: int = Field(default=10, ge=0)
     retry_base_delay: float = Field(default=1, ge=0, allow_inf_nan=False)
     retry_max_delay: float = Field(default=30, ge=0, allow_inf_nan=False)
     total_timeout: float = Field(default=180, gt=0, allow_inf_nan=False)
@@ -173,11 +173,17 @@ class ReliableChatOpenAI(ChatOpenAI):
     def _attempts(self, messages, stop, streaming, **kwargs):
         deadline = time.monotonic() + self.total_timeout
         last_error = None
+        calls = 0
         for role, model in [('primary', self), ('fallback', self._fallback)]:
             if model is None:
                 continue
             label, breaker = provider(model)
-            for attempt in range(self.retry_count + 1):
+            limit = self.retry_count + 1
+            if role == "primary" and self._fallback is not None and self.retry_count > 0:
+                limit -= 1  # 为备用模型保留一次请求，共用总重试预算。
+            for attempt in range(limit):
+                if calls >= self.retry_count + 1:
+                    break
                 check_cancel()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -186,6 +192,7 @@ class ReliableChatOpenAI(ChatOpenAI):
                     logger.warning('llm role=%s provider=%s model=%s result=circuit_open', role, label, model.model_name)
                     break
                 emitted = False
+                calls += 1
                 try:
                     logger.info('llm role=%s provider=%s model=%s attempt=%s circuit=%s', role, label, model.model_name, attempt + 1, 'half_open' if breaker.probe else 'closed')
                     timeout = model.request_timeout
@@ -209,7 +216,7 @@ class ReliableChatOpenAI(ChatOpenAI):
                     if isinstance(ex, LLMDeadlineError) or not can_retry or emitted:
                         raise
                     last_error = ex
-                    if attempt == self.retry_count:
+                    if attempt == limit - 1 or calls >= self.retry_count + 1:
                         break
                     delay = max(retry_after(ex), random.uniform(0, min(self.retry_max_delay, self.retry_base_delay * (2 ** attempt))))
                     if delay >= deadline - time.monotonic():
@@ -221,7 +228,7 @@ class ReliableChatOpenAI(ChatOpenAI):
                 except BaseException:
                     breaker.release()
                     raise
-        raise LLMUnavailableError('模型服务暂时不可用，重试及备用模型均未成功；会话 checkpoint 已保留') from last_error
+        raise LLMUnavailableError('API 接口异常，模型请求未能成功，请稍后重试；会话 checkpoint 已保留') from last_error
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         return list(self._attempts(messages, stop, False, **kwargs))[0]

@@ -32,7 +32,7 @@ def create_openai_llm() -> ChatOpenAI:
         base_url=global_config.OPENAI_BASE_URL,
         api_key=global_config.OPENAI_API_KEY,
         timeout=global_config.LLM_API_TIMEOUT,
-        max_retries=0,
+        max_retries=0,  # SDK 重试由外层 LLM_MAX_RETRIES 统一控制，避免叠加。
     )
     llm = ReliableChatOpenAI(
         **options,

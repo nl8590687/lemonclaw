@@ -223,3 +223,20 @@ def test_provider_open_skip_then_half_open_recovery():
     assert llm.invoke('hello').content == 'ok'
     assert breaker.opened is None and not breaker.probe
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("with_fallback", [False, True])
+def test_ten_retries_are_bounded_across_primary_and_fallback(with_fallback):
+    calls = []
+    def failed(request):
+        calls.append(request.url.host)
+        return httpx.Response(503, json={'error': {'message': 'busy'}})
+    llm = model(failed, breaker_threshold=100)
+    llm.retry_count = 10
+    if with_fallback:
+        llm._fallback = ChatOpenAI(model='backup', api_key='backup', base_url='https://backup.test/v1',
+            http_client=httpx.Client(transport=httpx.MockTransport(failed)), max_retries=0, streaming=True)
+    with pytest.raises(LLMUnavailableError, match='API 接口异常'):
+        llm.invoke('hello')
+    assert len(calls) == 11  # 首次请求 + 最多十次重试，包含备用模型。
+    assert calls[-1] == ('backup.test' if with_fallback else 'primary.test')

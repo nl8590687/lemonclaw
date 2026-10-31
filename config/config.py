@@ -57,7 +57,7 @@ class GlobalConfig(BaseSettings):
     MODEL_MAX_COMPLETION_TOKEN: int = int(os.environ.get("MODEL_MAX_COMPLETION_TOKEN", 128000))
     TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
     LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
-    LLM_MAX_RETRIES: int = int(os.environ.get("LLM_MAX_RETRIES", 2))
+    LLM_MAX_RETRIES: int = int(os.environ.get("LLM_MAX_RETRIES", 10))
     LLM_RETRY_BASE_DELAY: float = float(os.environ.get("LLM_RETRY_BASE_DELAY", 1))
     LLM_RETRY_MAX_DELAY: float = float(os.environ.get("LLM_RETRY_MAX_DELAY", 30))
     LLM_TOTAL_TIMEOUT: float = float(os.environ.get("LLM_TOTAL_TIMEOUT", 180))
