@@ -87,7 +87,8 @@ def create_workflow_tools(manager) -> list:
     @tool
     def workflow_execute(workflow_id: str, input: str = "{}", config: RunnableConfig = None) -> str:
         """启动后台 Workflow，立即返回 run_id；适用于已编排的多阶段/长任务。
-        启动后向用户说明 run_id，后续由完成/暂停/错误事件继续处理。
+        启动成功后向用户说明 run_id 并立即结束当前轮；工作流在后台运行，完成结果通过事件消息回传。
+        等待期间禁止调用 sleep 工具或循环轮询阻塞主会话，保持主 Agent 可接收完成/暂停/错误事件。
         用户询问进度时可 workflow_inspect_run；human/main_agent 暂停用 workflow_resume 回填。
 
         Args:
