@@ -46,10 +46,14 @@ class WorkflowBuilder:
 
     def compile(self, wf) -> CompiledStateGraph[StateT, Any, Any, Any]:
         """据 wf.spec 构建 StateGraph 并编译。失败抛 ValueError。"""
-        spec = wf.spec or {}
+        from agent.workflow.spec import validate_spec
+        spec = validate_spec(wf.spec or {}, self, wf.workflow_id)
+        wf.spec = spec
         state_fields = self._normalize_state_schema(spec.get("state_schema", []))
         nodes_spec = spec.get("nodes", [])
         edges_spec = self._normalize_edges(spec.get("edges", []), nodes_spec)
+        if any("END" in c["mapping"].values() for c in spec.get("conditionals", [])) and not any(e.get("dst") == "END" for e in spec.get("edges", [])):
+            edges_spec = edges_spec[:-1]
         conditionals_spec = spec.get("conditionals", [])
 
         if not nodes_spec:
@@ -166,8 +170,7 @@ class WorkflowBuilder:
                 raise ValueError(f"SubAgent 工具集不能含 workflow_* 工具: {tn}（递归护栏，§1.7）")
             t = self.tools.get(tn)
             if t is None:
-                logger.warning("SubAgent %s 引用未知工具 %s，跳过", sa_id, tn)
-                continue
+                raise ValueError(f"SubAgent {sa_id} 引用未知工具 {tn}")
             selected.append(t)
 
         base_prompt = system_prompt

@@ -47,6 +47,7 @@ def create_workflow_tools(manager) -> list:
          "nodes": [{"name": "step1", "kind": "llm", "config": {"prompt": "处理: {input_text}", "output_field": "result"}}],
          "edges": [{"src": "START", "dst": "step1"}, {"src": "step1", "dst": "END"}]}
 
+        spec_version: 1（可省略，保存时补全）；定义期校验结构、引用和规模上限。
         state_schema: [{name, type(str/int/float/bool/list/dict), reducer?(add_messages/overwrite/append)}]
         输入字段与各节点的 output_field 均需在 state_schema 中声明。
         nodes kind: llm(prompt+output_field) / tool(tool_name+args+output_field) /
@@ -59,6 +60,13 @@ def create_workflow_tools(manager) -> list:
         collect 为 subagent（tools 选择当前可用搜索/抓取工具，task="调查 {topic}，附来源与日期"，
         output_field="evidence"）；write 为 llm（prompt="核验并汇总 {evidence}"，output_field="report"）；
         edges 为 START->collect->write->END。周期任务复用此定义并用 create_cron_task 绑定。
+
+        支持并行分支：START->A，A->B、A->C，B->D、C->D，D->END。
+        B/C 为同一阶段完全独立的子任务，分别写入不同的 output_field（如 evidence_b/evidence_c），
+        D 读取两者结果后汇总。只对互不依赖、互不干扰的子任务并行；
+        涉及同一文件、数据库记录或外部资源的读写冲突时按依赖串行编排，避免竞态条件。
+        同一步并行写同一 state 字段需要适当 reducer，且合并结果不能依赖执行顺序；优先使用独立字段。
+        此示例的 B/C 在同一阶段结束后进入 D；分支深度不同时须显式设计同步汇合。
 
         Args:
             name: 工作流名称（唯一标识）
@@ -73,13 +81,14 @@ def create_workflow_tools(manager) -> list:
             return "❌ spec 必须是 JSON 对象"
         wf = manager.define_workflow(name, description, spec_dict)
         if wf.last_error:
-            return f"⚠️ 工作流 {wf.workflow_id} 已保存但编译失败: {wf.last_error}"
+            return f"❌ 工作流 {wf.workflow_id} 定义失败: {wf.last_error}"
         return f"✅ 工作流 {wf.workflow_id}（v{wf.version}）已定义并编译成功"
 
     @tool
     def workflow_execute(workflow_id: str, input: str = "{}", config: RunnableConfig = None) -> str:
         """启动后台 Workflow，立即返回 run_id；适用于已编排的多阶段/长任务。
-        启动后向用户说明 run_id，后续由完成/暂停/错误事件继续处理。
+        启动成功后向用户说明 run_id 并立即结束当前轮；工作流在后台运行，完成结果通过事件消息回传。
+        等待期间禁止调用 sleep 工具或循环轮询阻塞主会话，保持主 Agent 可接收完成/暂停/错误事件。
         用户询问进度时可 workflow_inspect_run；human/main_agent 暂停用 workflow_resume 回填。
 
         Args:
