@@ -30,6 +30,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
 
 from agent.workflow.state import render_template
+from agent.workflow.control import check_control
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,9 @@ def _llm_node(nc: dict, llm):
     """render(prompt, state) -> llm.invoke -> 写入 output_field。"""
     def fn(state, config=None):
         prompt = render_template(nc.get("prompt", ""), state)
+        check_control()
         resp = llm.invoke(prompt)
+        check_control()
         content = getattr(resp, "content", str(resp))
         return {_output_field(nc, "output"): content}
     return fn
@@ -96,9 +99,13 @@ def _tool_node(nc: dict, tools: dict):
                     return v
             args = {k: _render_value(v, state) for k, v in args.items()}
         try:
+            check_control()
             result = tool.invoke(args or {}, config=config)
+            check_control()
             return {_output_field(nc, "output"): str(result)}
         except Exception as ex:
+            if any(k in nc for k in ("max_retries", "on_error", "timeout_seconds")):
+                raise
             logger.exception("tool_node %s failed", tool_name)
             return {_output_field(nc, "output"): f"❌ 工具 {tool_name} 调用出错: {ex}"}
     return fn
@@ -163,6 +170,8 @@ def _subgraph_node(nc: dict, manager):
             )
             return {k: v for k, v in result.items() if k in (state or {})}
         except Exception as ex:
+            if any(k in nc for k in ("max_retries", "on_error", "timeout_seconds")):
+                raise
             logger.exception("subgraph_node %s failed", sub_workflow_id)
             return {_output_field(nc, "output"): f"❌ 子工作流 {sub_workflow_id} 执行出错: {ex}"}
     return fn

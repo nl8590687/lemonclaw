@@ -53,6 +53,11 @@ def create_workflow_tools(manager) -> list:
         nodes kind: llm(prompt+output_field) / tool(tool_name+args+output_field) /
                     subagent(type=general, system_prompt, tools=[工具名], skills=[技能名], task, output_field) /
                     main_agent(task, output_field) / human(question, output_field) / subgraph(sub_workflow_id)
+        节点 config 可设置 timeout_seconds（默认 300 秒）、max_retries（默认 0）、retry_backoff（默认 1 秒，指数退避）。
+        on_error=fail|continue|compensate；continue 将失败写入 output_field 后继续，
+        compensate 需配置 compensation={"tool_name": "补偿工具", "args": {...}}，在重试耗尽后执行一次。
+        仅对可安全重放的节点设置重试；超时调用可能仍在运行，超时不会自动重试或补偿。
+        取消在节点和模型/工具调用边界生效，已进入的阻塞调用可能继续，但返回后不会推进工作流。
         edges: [{src, dst}]，START/END 可省略（自动补）
         conditionals: [{src, router: {kind: "state_field"|"llm", field?: "..."}, mapping: {key: target}}]
 

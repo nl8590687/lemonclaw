@@ -92,3 +92,15 @@ def test_json_schema_and_json_args_compatibility():
     normalized = validate_spec(spec, b, 'test')
     assert normalized['nodes'][0]['config']['args'] == {'text': 'hi'}
     assert normalized['state_schema'][0]['type'] == 'string'
+
+
+@pytest.mark.parametrize('policy', [
+    {'timeout_seconds': 0}, {'timeout_seconds': -1}, {'timeout_seconds': float('inf')},
+    {'max_retries': -1}, {'retry_backoff': -1}, {'on_error': 'invalid'},
+    {'on_error': 'compensate'}, {'compensation': {'tool_name': 'missing'}},
+])
+def test_invalid_execution_policy(policy):
+    spec = legacy()
+    spec['nodes'][0].update(policy)
+    with pytest.raises(ValueError):
+        validate_spec(spec, builder(), 'test')

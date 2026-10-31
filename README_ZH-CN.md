@@ -332,6 +332,9 @@ metadata:
 
 ## 🔀 多 Agent 工作流
 
+节点 config 支持 `timeout_seconds`（默认 300 秒）、`max_retries`（默认 0）、指数退避 `retry_backoff`（默认 1 秒）以及 `on_error`（`fail`、`continue`、`compensate`）。补偿通过 `compensation` 声明 `tool_name` 与 `args`。仅对可安全重复的操作配置重试。取消在节点、模型与工具调用边界生效，并保留 checkpoint。超时的阻塞调用可能继续留在守护线程中，其结果会被丢弃，后续调用会被阻止；超时会明确报错，不自动重试或补偿。尚未结束的节点调用最多 32 个，容量占满时新节点明确报错。
+
+
 简单查询由主 Agent 直接完成；多阶段调查、核验汇总和长任务优先使用后台 Workflow。使用 `workflow_list_defs` 检查可复用定义，`workflow_execute` 启动后返回 run_id，后续由事件回调继续处理。子 Agent 通过 `tools` 和 `skills` 声明所需工具及技能，技能正文进入其 system prompt。
 
 周期业务可用 `create_cron_task(prompt="每日天气报告", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"上海"}')` 绑定已定义的可复用 Workflow。每次触发创建独立 run，计划使用服务本地时区。`update_cron_task` 可更新绑定及输入，`workflow_id=""` 恢复提示词任务。

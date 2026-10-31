@@ -26,6 +26,7 @@ from typing import Any
 from langgraph.types import Command
 
 from channels.bus import get_bus, EventType
+from agent.workflow.control import current_control, check_control, WorkflowStopped, NodeTimeout, ControlCallback
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,18 @@ class WorkflowRunner:
         返回 {status, loop_kind, payload}。"""
         config = self._run_config(run_id)
         config["configurable"]["origin_context"] = context
+        control = current_control()
+        if control:
+            config["callbacks"] = [ControlCallback(control)]
         try:
+            check_control()
             graph.invoke(input, config=config)
+        except WorkflowStopped as ex:
+            return self._stopped(run_id, workflow_id, ex, context)
         except Exception as ex:
             # GraphInterrupt 或其他异常
             ex_str = str(ex)
-            if "GraphInterrupt" in type(ex).__name__ or "interrupt" in ex_str.lower():
+            if "GraphInterrupt" in type(ex).__name__:
                 pass  # interrupt 是预期的，下面检测
             else:
                 logger.exception("workflow invoke error: %s", run_id)
@@ -88,11 +95,17 @@ class WorkflowRunner:
         """graph.invoke(Command(resume=value), thread_id=run_id) -> 同 invoke 处理。"""
         config = self._run_config(run_id)
         config["configurable"]["origin_context"] = context
+        control = current_control()
+        if control:
+            config["callbacks"] = [ControlCallback(control)]
         try:
+            check_control()
             graph.invoke(Command(resume=value), config=config)
+        except WorkflowStopped as ex:
+            return self._stopped(run_id, workflow_id, ex, context)
         except Exception as ex:
             ex_str = str(ex)
-            if "GraphInterrupt" in type(ex).__name__ or "interrupt" in ex_str.lower():
+            if "GraphInterrupt" in type(ex).__name__:
                 pass
             else:
                 logger.exception("workflow resume error: %s", run_id)
@@ -113,6 +126,14 @@ class WorkflowRunner:
         result_text = self._make_text(run_id, workflow_id, "completed", {"result": result})
         self._publish(run_id, workflow_id, "completed", {"result": result}, result_text, context)
         return {"status": "completed", "loop_kind": "completed", "payload": {"result": result}}
+
+    def _stopped(self, run_id, workflow_id, ex, context):
+        if isinstance(ex, NodeTimeout):
+            text = str(ex)
+            self._publish(run_id, workflow_id, "error", {"error": text},
+                          self._make_text(run_id, workflow_id, "error", {"error": text}), context)
+            return {"status": "error", "payload": {"error": text}}
+        return {"status": "cancelled", "payload": {}}
 
     def _detect_interrupt(self, graph, config) -> dict | None:
         """从 graph.get_state(config).tasks 读 interrupts[0].value。"""
@@ -154,6 +175,15 @@ class WorkflowRunner:
     def _publish(self, run_id: str, workflow_id: str, loop_kind: str,
                  payload: dict, text: str, context: dict):
         """发 LangGraphLoop 普通消息事件到总线。"""
+        control = current_control()
+        if control:
+            with control.lock:
+                if control.cancelled.is_set() or (control.failure is not None and loop_kind != "error"):
+                    return
+                return self._publish_event(run_id, workflow_id, loop_kind, payload, text, context)
+        return self._publish_event(run_id, workflow_id, loop_kind, payload, text, context)
+
+    def _publish_event(self, run_id, workflow_id, loop_kind, payload, text, context):
         try:
             bus = get_bus()
             bus.publish(

@@ -64,12 +64,17 @@ class BaseSubAgent:
 
         公共机制，子类一般不覆盖。在 workflow worker 线程内联调用（不 yield 到主循环）。
         """
+        from agent.workflow.control import current_control, ControlCallback, check_control
+        control = current_control()
+        check_control()
         thread_id = f"sa_{self.subagent_id}_{uuid.uuid4().hex[:8]}"
         try:
             result = self._agent.invoke(
                 {"messages": [HumanMessage(content=task)]},
-                config={"configurable": {"thread_id": thread_id, "origin_context": context or {}}},
+                config={"configurable": {"thread_id": thread_id, "origin_context": context or {}},
+                        "callbacks": [ControlCallback(control)] if control else []},
             )
+            check_control()
             msgs = result.get("messages", [])
             if msgs and isinstance(msgs[-1], AIMessage):
                 return msgs[-1].content or ""
@@ -77,6 +82,8 @@ class BaseSubAgent:
                 return str(msgs[-1].content)
             return ""
         except Exception as ex:
+            if control and getattr(control, "propagate_errors", False):
+                raise
             logger.exception("SubAgent %s run failed", self.subagent_id)
             return f"❌ SubAgent {self.subagent_id} 执行出错: {ex}"
 
