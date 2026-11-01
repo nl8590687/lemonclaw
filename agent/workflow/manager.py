@@ -76,7 +76,7 @@ class WorkflowManager:
             tools = create_tool_list()  # 此时 manager 已初始化，无递归
             self._tools_dict = {t.name: t for t in tools
                                 if not t.name.startswith("workflow_")
-                                and t.name not in {"load_skill", "unload_skill"}}
+                                and t.name not in {"load_skill", "unload_skill", "notify_progress", "finish_silently"}}
         return self._tools_dict
 
     def _make_builder(self) -> WorkflowBuilder:

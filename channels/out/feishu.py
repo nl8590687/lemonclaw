@@ -73,8 +73,8 @@ class FeishuOutputChannel(BaseOutChannel):
     def write_message(self, msg: str, context: dict[str, object]):
         open_id = self._resolve_open_id(context)
         if not open_id or not self._sender or not msg:
-            return
-        self._sender.send_markdown(open_id, msg)
+            return False
+        return self._sender.send_markdown(open_id, msg)
 
     def print(self, msg: str):
         # 飞书侧不做流式增量输出，整体回复由 write_message 统一发送。

@@ -30,6 +30,7 @@ from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 from agent.tools.network_guard import begin_user_turn, reset_user_turn
+from agent.tools.notification_tool import begin_notifications, reset_notifications, TurnCompletionMiddleware
 from agent.callback import StreamingCallback
 from agent.context_agent import ContextAgent
 from agent.memory import get_memory_manager, MemoryMiddleware
@@ -47,7 +48,7 @@ def _create_agent(llm: BaseChatModel, tools: dict[str, Any], system_prompt: Syst
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-        middleware=middleware or (),
+        middleware=[*(middleware or ()), TurnCompletionMiddleware()],
         checkpointer=checkpointer,
     )
 
@@ -150,6 +151,7 @@ class AgentService:
             messages.append(HumanMessage(content=input_msg))
         turn_token = begin_user_turn(input_msg)
         feishu_token = begin_feishu_turn(context)
+        notifications, notification_token = begin_notifications(out_chan, context)
         try:
             result = self.agent.invoke(
                 {
@@ -160,7 +162,7 @@ class AgentService:
                         "origin_context": origin_context({"configurable": {"origin_context": context}}),
                     },
                     "callbacks": [callback],
-                    "recursion_limit": self.max_iterations * 2,
+                    "recursion_limit": self.max_iterations * 3,  # 每轮新增完成检查节点，保留原模型/工具轮次预算
                 },
                 # 工具开始执行前必须提交调用状态，避免 SIGKILL 丢失中断证据。
                 durability="sync",
@@ -169,6 +171,7 @@ class AgentService:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
             return None
         finally:
+            reset_notifications(notification_token)
             reset_feishu_turn(feishu_token)
             reset_user_turn(turn_token)
         if selected:
@@ -184,7 +187,11 @@ class AgentService:
         messages = result.get("messages", [])
         final_message = messages[-1] if messages else None
         final_content = final_message.content if isinstance(final_message, AIMessage) else ""
-        if isinstance(final_content, str) and final_content.strip():
+        result["completed"] = notifications.silent or bool(isinstance(final_content, str) and final_content.strip())
+        result["reply_required"] = not notifications.silent
+        if notifications.silent:
+            result["completion_reason"] = notifications.reason
+        elif isinstance(final_content, str) and final_content.strip():
             out_chan.write_message(final_content, context)
         else:
             metadata = getattr(final_message, "response_metadata", None) or {}

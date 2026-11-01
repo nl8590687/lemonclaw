@@ -438,3 +438,11 @@ metadata:
 ## 📄 许可证
 
 基于 [Apache License 2.0](LICENSE) 开源。Copyright © 2026 LemonClaw Contributors.
+
+### 关键通知与静默完成
+
+主 Agent 默认发送最终答复；`notify_progress(message, kind)` 仅用于必要的关键进展、阻碍或完整结果交付，每轮最多三条、每条最多 2000 字，重复通知不发送。它复用当前输出通道，不更改接收人；飞书状态表情在整轮结束时更新。
+
+`finish_silently(reason, outcome)` 必须单独调用。后台 webhook、系统、Workflow 回传或自定义事件可在确认无需关注后以 `no_action_needed` 结束；用户消息与定时任务禁止此路径。只有本轮已成功通过 `notify_progress(kind="delivered_result")` 完整交付，才允许 `already_delivered` 避免重复回复。普通进度不算交付；不符合条件时返回工具错误说明，Agent 继续执行。工具结果先保存到 checkpoint，再结束执行图；成功静默完成仍触发 Typing → DONE。
+
+通知和静默工具仅供前台主 Agent 使用，不供 Workflow 节点或子 Agent 调用。提示词要求报告、异常、待确认事项正常交付；程序校验事件类型、交付标记、通知上限和独立调用，是否确实无需用户关注仍由模型依据任务判断。

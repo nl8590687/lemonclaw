@@ -938,6 +938,8 @@ def reaction_eligible(context):
 
 
 def turn_completed(result):
+    if isinstance(result, dict) and result.get("completed") is True:
+        return True
     messages = result.get('messages', []) if isinstance(result, dict) else []
     return bool(messages and isinstance(messages[-1], AIMessage)
                 and isinstance(messages[-1].content, str) and messages[-1].content.strip())
