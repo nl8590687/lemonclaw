@@ -134,9 +134,6 @@ class AgentService:
                 "请先核实执行结果，再用 /clear 清理中断状态并重新提交请求。"
             )
             return None
-        if state is not None and getattr(get_global_config(), 'ENABLE_VISION', True):
-            from agent.media.images import check_image_scope
-            check_image_scope((state.values or {}).get('messages', []), context)
         callback = StreamingCallback(out_chan)
         messages: list[BaseMessage] = []
         attachment_note = format_attachment_message(attachments)
