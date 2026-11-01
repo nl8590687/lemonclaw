@@ -194,7 +194,7 @@ Set `ENABLE_VISION=True` (default) when the main model supports image input. Ima
 
 Set `LLM_FALLBACK_ENABLE_VISION=True` only if the backup model also supports images. Image requests require a vision-capable fallback. Turning vision off sends textual image references in place of image data. Keep referenced files available; changed, missing or over-budget images produce an explicit error. Context summarization uses the same image adapter. For Workflow `llm`/`subagent` nodes, set `config.image_ids` or `config.image_ids_field` (a list state field) to explicitly pass image IDs from the originating conversation. Image generation is a separate future capability; existing file-sending tools remain available.
 
-The existing shared main conversation is retained. If its history contains images from another origin, use a distinct `session_key` or `/clear` before switching origins; the agent blocks that request to avoid cross-origin image access.
+The existing shared main conversation is retained: terminal and Feishu requests can continue the same image conversation. Historical images use their stored attachment scope; selecting new attachments still checks the current origin. Use distinct `session_key` values when separate conversations are needed.
 
 ---
 

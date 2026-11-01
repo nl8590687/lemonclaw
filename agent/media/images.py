@@ -75,13 +75,6 @@ def image_message(text, ids, context):
                         additional_kwargs={REFS: refs})
 
 
-def check_image_scope(messages, context):
-    """共享旧会话遇到其他来源图片时明确停止，避免跨来源读取图像。"""
-    scope = attachment_scope(context)
-    if any(ref.get('scope') != scope for msg in messages for ref in msg.additional_kwargs.get(REFS, [])):
-        raise ValueError('当前历史包含其他来源的图片，请使用独立 session_key 或 /clear 清理共享历史')
-
-
 def adapt_messages(messages, enabled):
     """保持 checkpoint 中消息不变，在请求副本中展开已校验附件引用。"""
     import json

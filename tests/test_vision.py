@@ -302,14 +302,26 @@ def test_remote_input_cannot_select_local_path(media, source):
         media_command(f'/image "{path}" -- 查看', {'source': source})
 
 
-def test_shared_legacy_history_cannot_send_other_origin_images(media):
+def test_shared_history_accepts_terminal_after_feishu_image(media):
     from tests.test_checkpoint import make_service
-    item = attachment(png(media / 'origin.png'))
+    from agent.agent import _create_agent
+    origin = {'source': 'feishu', 'chat_id': 'chat', 'open_id': 'owner'}
+    item = register_image({'path': str(png(media / 'origin.png'))}, origin)
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return sdk_reply(request)
+    model = llm(handler)
     service = make_service()
+    service.agent = _create_agent(model, [], 'test', service.checkpointer)
     try:
-        service.run('看图', {}, attachments=[dict(item, vision_selected=True)])
-        with pytest.raises(ValueError, match='其他来源'):
-            service.run('再看看', {'source': 'feishu', 'chat_id': 'other', 'open_id': 'owner'})
+        service.run('看图', origin, attachments=[dict(item, vision_selected=True)])
+        result = service.run('你好', {'source': 'terminal'})
+        assert result['messages'][-1].content == '看到两张图'
+        assert any(isinstance(m.get('content'), list) for m in payloads[-1]['messages'])
+        assert service.run('继续', origin)['messages'][-1].content == '看到两张图'
+        with pytest.raises(ValueError):
+            image_message('非法选择', [item['attachment_id']], {'source': 'terminal'})
     finally:
         service.close()
 

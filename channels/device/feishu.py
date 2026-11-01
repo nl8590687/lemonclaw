@@ -853,6 +853,8 @@ class FeishuClient:
 
         event_handler = lark.EventDispatcherHandler.builder("", "") \
             .register_p2_im_message_receive_v1(self._handle_message) \
+            .register_p2_im_message_reaction_created_v1(lambda _: None) \
+            .register_p2_im_message_reaction_deleted_v1(lambda _: None) \
             .build()
 
         self._ws_client = lark.ws.Client(
