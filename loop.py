@@ -78,10 +78,15 @@ def loop_forever():
     msg_bus = get_bus()
     while True:
         out_chan = svr.default_out_chan
+        reaction_context = None
+        reaction_completed = False
         try:
             event_msg: EventMessage = msg_bus.poll()
             if not event_msg:
                 continue
+            from channels.device.feishu import reaction_eligible, turn_completed
+            if event_msg.event_type == EventType.LARK_MESSAGE and reaction_eligible(event_msg.context):
+                reaction_context = event_msg.context
             event_msg_content = str(event_msg.content) if len(str(event_msg.content)) < 100 else str(event_msg.content)[:100]
             svr.default_out_chan.print(Text(f"\n\n[系统] 收到事件: {event_msg.event_type.value} {event_msg_content}\n\n", style="dim"))
             msg_text: str = event_msg.content.get("text", "")
@@ -108,7 +113,8 @@ def loop_forever():
                 if receipt is not None:
                     out_chan.write_message(receipt, event_msg.context)
                     continue
-                svr.run(question, event_msg.context, out_chan, attachments=selected)
+                result = svr.run(question, event_msg.context, out_chan, attachments=selected)
+                reaction_completed = turn_completed(result)
                 svr.trim_msg_history()
                 continue
             if msg_text.strip().startswith("/"):
@@ -116,12 +122,17 @@ def loop_forever():
                     break
             else:
                 context = event_msg.context
-                svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
+                result = svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
+                reaction_completed = turn_completed(result)
             svr.trim_msg_history()
         except KeyboardInterrupt:
             break
         except Exception as ex:
             out_chan.write_system_error(f"error: {ex}")
+        finally:
+            if reaction_context is not None:
+                from channels.device.feishu import finish_live_reaction
+                finish_live_reaction(reaction_context, reaction_completed)
 
     stop_event_source()
     # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）

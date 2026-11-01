@@ -39,6 +39,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from langchain_core.messages import AIMessage
+
 from config import get_global_config
 from dao import delete_state, get_or_set_state, get_state, set_state
 
@@ -177,6 +179,38 @@ class FeishuMessageSender:
         return ok
 
     # ---- 对外 ----
+
+    def add_reaction(self, message_id: str, emoji_type: str) -> str | None:
+        """以当前机器人身份添加消息表情，返回可用于撤销的 reaction_id。"""
+        try:
+            from lark_oapi.api.im.v1 import CreateMessageReactionRequest, CreateMessageReactionRequestBody, Emoji
+            request = CreateMessageReactionRequest.builder().message_id(message_id).request_body(
+                CreateMessageReactionRequestBody.builder().reaction_type(
+                    Emoji.builder().emoji_type(emoji_type).build()).build()).build()
+            response = self.client.im.v1.message_reaction.create(request)
+            if response.success():
+                return getattr(response.data, 'reaction_id', None)
+            if lark:
+                lark.logger.warning('添加消息表情失败: code=%s', response.code)
+        except Exception:
+            if lark:
+                lark.logger.warning('添加消息表情失败，继续处理消息')
+        return None
+
+    def delete_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """撤销本机器人添加的指定表情。"""
+        try:
+            from lark_oapi.api.im.v1 import DeleteMessageReactionRequest
+            request = DeleteMessageReactionRequest.builder().message_id(message_id).reaction_id(reaction_id).build()
+            response = self.client.im.v1.message_reaction.delete(request)
+            if response.success():
+                return True
+            if lark:
+                lark.logger.warning('删除消息表情失败: code=%s', response.code)
+        except Exception:
+            if lark:
+                lark.logger.warning('删除消息表情失败，继续处理消息')
+        return False
 
     def send_text(self, open_id: str, text: str) -> bool:
         """发送纯文本"""
@@ -675,6 +709,7 @@ class FeishuClient:
             # 上下文，回复时需要 open_id
             context = {
                 "source": "feishu",
+                "sender_type": getattr(sender, "sender_type", None),
                 "open_id": user_open_id,
                 "message_id": message.message_id,
                 "chat_id": message.chat_id,
@@ -752,7 +787,23 @@ class FeishuClient:
                 return
 
             # 由上层（FeishuInput）决定如何投递到消息总线
-            self.on_message(user_text, None, context)
+            if reaction_eligible(context) and (
+                not user_text.strip().startswith('/') or
+                (user_text.strip().split(maxsplit=1)[0].lower() == '/image' and len(user_text.split()) > 1)
+            ):
+                context['feishu_reaction_active'] = True
+                try:
+                    context['feishu_typing_reaction_id'] = self.sender.add_reaction(message.message_id, 'Typing')
+                except Exception:
+                    context['feishu_typing_reaction_id'] = None
+            try:
+                self.on_message(user_text, None, context)
+            except Exception:
+                try:
+                    finish_reaction(context, self.sender, False)
+                except Exception:
+                    pass
+                raise
 
         except Exception as e:  # pragma: no cover
             if lark:
@@ -875,3 +926,41 @@ def is_feishu_owner(open_id: str | None, owner_open_id: str | None = None) -> bo
     if owner_open_id is None:
         owner_open_id = get_feishu_owner_open_id()
     return owner_open_id is None or owner_open_id == open_id
+
+
+def reaction_eligible(context):
+    return (getattr(get_global_config(), 'ENABLE_FEISHU', False)
+            and context.get('source') == 'feishu'
+            and context.get('sender_type') == 'user'
+            and isinstance(context.get('message_id'), str) and bool(context['message_id']))
+
+
+def turn_completed(result):
+    messages = result.get('messages', []) if isinstance(result, dict) else []
+    return bool(messages and isinstance(messages[-1], AIMessage)
+                and isinstance(messages[-1].content, str) and messages[-1].content.strip())
+
+
+def finish_reaction(context, sender, completed):
+    if not context.pop('feishu_reaction_active', False):
+        return
+    reaction_id = context.pop('feishu_typing_reaction_id', None)
+    try:
+        if reaction_id:
+            sender.delete_reaction(context['message_id'], reaction_id)
+        if completed:
+            sender.add_reaction(context['message_id'], 'DONE')
+    except Exception:
+        # 对测试替身或第三方 sender 同样隔离异常。
+        import logging
+        logging.getLogger(__name__).warning('飞书状态表情更新失败，主流程继续')
+
+
+def finish_live_reaction(context, completed):
+    try:
+        client = get_feishu_client()
+        if client is not None:
+            finish_reaction(context, client.sender, completed)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('飞书状态表情清理失败，主流程继续')
