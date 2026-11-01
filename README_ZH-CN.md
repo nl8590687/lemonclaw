@@ -176,6 +176,8 @@ docker run -e TZ=Asia/Shanghai \
 模型调用通过 `LLM_API_TIMEOUT` 设置单次请求超时，`LLM_TOTAL_TIMEOUT` 限制包含重试、备用模型在内的总耗时。`LLM_MAX_RETRIES`（默认最多重试 10 次，主备模型共用预算）、`LLM_RETRY_BASE_DELAY`、`LLM_RETRY_MAX_DELAY` 控制带随机抖动的指数退避，限流时遵循 `Retry-After`。可设置 `LLM_FALLBACK_MODEL`，以及可选的 `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY`。Provider 熔断通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 与 `LLM_CIRCUIT_COOLDOWN` 配置。自动重试和切换适用于流式输出开始前的暂时性故障；失败时保留现有会话 checkpoint。总时限到达后释放调用方，已进入 SDK 的请求可能继续留在有容量上限的守护线程中直至返回。
 
 
+飞书用户请求接收后会添加 `Typing` 黄豆人表情，本轮主 Agent 成功返回非空回复后撤销 `Typing` 并添加 `DONE`。异常、中断或空回复只清理 `Typing`；系统命令和机器人消息跳过，图片分析命令参与。仅暂存、等待补充指令的附件不添加处理表情。机器人需具备 `im:message.reactions:write_only`（发送、删除消息表情回复）权限。表情接口失败会记录日志，不阻断消息处理。后台 Workflow 场景的 `DONE` 表示前台本轮回复完成，后台结果仍通过现有事件机制回传。
+
 ### 图片输入
 
 主模型支持图像输入时设置 `ENABLE_VISION=True`（默认开启）。图片保存到 `FEISHU_RECEIVED_DIR`，会话 checkpoint 保存稳定附件引用；请求模型时按原始字节编码为 Base64 Data URL。支持按实际内容校验 JPEG、PNG、GIF、WebP。应用单次请求最多 8 张图、图片原始数据合计 20 MiB，单张最多 10 MiB。纯文本请求保持现有行为。
