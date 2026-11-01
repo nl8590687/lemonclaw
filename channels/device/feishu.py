@@ -39,6 +39,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from langchain_core.messages import AIMessage
+
 from config import get_global_config
 from dao import delete_state, get_or_set_state, get_state, set_state
 
@@ -785,7 +787,6 @@ class FeishuClient:
                 return
 
             # 由上层（FeishuInput）决定如何投递到消息总线
-            from channels.device.reactions import reaction_eligible, finish_reaction
             if reaction_eligible(context) and (
                 not user_text.strip().startswith('/') or
                 (user_text.strip().split(maxsplit=1)[0].lower() == '/image' and len(user_text.split()) > 1)
@@ -925,3 +926,41 @@ def is_feishu_owner(open_id: str | None, owner_open_id: str | None = None) -> bo
     if owner_open_id is None:
         owner_open_id = get_feishu_owner_open_id()
     return owner_open_id is None or owner_open_id == open_id
+
+
+def reaction_eligible(context):
+    return (getattr(get_global_config(), 'ENABLE_FEISHU', False)
+            and context.get('source') == 'feishu'
+            and context.get('sender_type') == 'user'
+            and isinstance(context.get('message_id'), str) and bool(context['message_id']))
+
+
+def turn_completed(result):
+    messages = result.get('messages', []) if isinstance(result, dict) else []
+    return bool(messages and isinstance(messages[-1], AIMessage)
+                and isinstance(messages[-1].content, str) and messages[-1].content.strip())
+
+
+def finish_reaction(context, sender, completed):
+    if not context.pop('feishu_reaction_active', False):
+        return
+    reaction_id = context.pop('feishu_typing_reaction_id', None)
+    try:
+        if reaction_id:
+            sender.delete_reaction(context['message_id'], reaction_id)
+        if completed:
+            sender.add_reaction(context['message_id'], 'DONE')
+    except Exception:
+        # 对测试替身或第三方 sender 同样隔离异常。
+        import logging
+        logging.getLogger(__name__).warning('飞书状态表情更新失败，主流程继续')
+
+
+def finish_live_reaction(context, completed):
+    try:
+        client = get_feishu_client()
+        if client is not None:
+            finish_reaction(context, client.sender, completed)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('飞书状态表情清理失败，主流程继续')

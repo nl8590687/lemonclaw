@@ -84,7 +84,7 @@ def loop_forever():
             event_msg: EventMessage = msg_bus.poll()
             if not event_msg:
                 continue
-            from channels.device.reactions import reaction_eligible, turn_completed
+            from channels.device.feishu import reaction_eligible, turn_completed
             if event_msg.event_type == EventType.LARK_MESSAGE and reaction_eligible(event_msg.context):
                 reaction_context = event_msg.context
             event_msg_content = str(event_msg.content) if len(str(event_msg.content)) < 100 else str(event_msg.content)[:100]
@@ -131,7 +131,7 @@ def loop_forever():
             out_chan.write_system_error(f"error: {ex}")
         finally:
             if reaction_context is not None:
-                from channels.device.reactions import finish_live_reaction
+                from channels.device.feishu import finish_live_reaction
                 finish_live_reaction(reaction_context, reaction_completed)
 
     stop_event_source()

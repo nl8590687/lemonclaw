@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 import channels.device.feishu as feishu
-from channels.device.reactions import finish_reaction, reaction_eligible
+from channels.device.feishu import finish_reaction, reaction_eligible
 from tests.test_feishu_file_receive import _event
 
 
