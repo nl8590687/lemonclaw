@@ -439,3 +439,9 @@ Contributions are welcome! Please read [AGENTS.md](AGENTS.md) first — it docum
 ## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright © 2026 LemonClaw Contributors.
+
+### Key updates and silent completion
+
+The main agent normally sends a final reply. `notify_progress(message, kind)` sends necessary milestones, blockers, or a complete result through the current output channel, with duplicate suppression and a limit of three notifications of up to 2000 characters per turn.
+
+`finish_silently(reason, outcome)` must be called alone. `no_action_needed` is allowed for background webhook, system, Workflow completion, and custom events; user messages and scheduled tasks require a reply. `already_delivered` requires a successful `notify_progress(kind="delivered_result")` in this turn. Progress alone does not qualify. Rejected requests return to the model. Successful requests save the tool result before ending the graph and still complete Typing → DONE. Both tools are restricted to the main agent. Prompts require reports, errors, and questions to be delivered; the model remains responsible for deciding whether a background event actually needs attention.

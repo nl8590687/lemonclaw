@@ -72,6 +72,7 @@ def test_typing_failure_preserves_request(receiver):
 
 @pytest.mark.parametrize('result,raises,done', [
     ({'messages':[AIMessage(content='ok')]},False,True),
+    ({'messages': [], 'completed': True, 'reply_required': False},False,True),
     (None,False,False), ({'messages':[AIMessage(content='')]},False,False),
     (None,True,False),
 ])

@@ -105,6 +105,7 @@ def loop_forever():
             if not msg_text.strip() and not attachments:
                 continue
 
+            event_msg.context["_event_type"] = event_msg.event_type.value
             out_chan = get_output_channel(event_msg)
             is_terminal_event = event_msg.event_type.value == EventType.TERMINAL.value
             from agent.media.commands import is_media_command, media_command

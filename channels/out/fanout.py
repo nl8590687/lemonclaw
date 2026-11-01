@@ -39,7 +39,7 @@ class FanoutOutputChannel(BaseOutChannel):
         self.channels = list(channels)
 
     def write_message(self, msg: str, context: dict[str, object]):
-        self._fanout("write_message", msg, context)
+        return self._fanout("write_message", msg, context)
 
     def print(self, msg: str):
         self._fanout("print", msg)
@@ -60,12 +60,16 @@ class FanoutOutputChannel(BaseOutChannel):
         self._fanout("write_system_error", content)
 
     def _fanout(self, method_name: str, *args, **kwargs):
+        success = bool(self.channels)
         for channel in self.channels:
             try:
-                getattr(channel, method_name)(*args, **kwargs)
+                if getattr(channel, method_name)(*args, **kwargs) is False:
+                    success = False
             except Exception:
+                success = False
                 logger.exception(
                     "output channel %s.%s failed",
                     type(channel).__name__,
                     method_name,
                 )
+        return success
