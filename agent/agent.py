@@ -23,11 +23,16 @@ from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
 from agent.checkpoint import PersistentSaver
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
+from dao.question import QuestionDAO
+from agent.questions import (pending_question, parse_terminal, actor_matches, terminal_question,
+                             begin_question_turn, reset_question_turn)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from agent.history import protected_boundary, trim_oversized
 
 from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
 from agent.tools import create_tool_list
+from agent.tools.question_tool import QuestionCallGuard
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 from agent.tools.network_guard import begin_user_turn, reset_user_turn
 from agent.tools.notification_tool import begin_notifications, reset_notifications, TurnCompletionMiddleware
@@ -48,7 +53,7 @@ def _create_agent(llm: BaseChatModel, tools: dict[str, Any], system_prompt: Syst
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-        middleware=[*(middleware or ()), TurnCompletionMiddleware()],
+        middleware=[*(middleware or ()), QuestionCallGuard(), TurnCompletionMiddleware()],
         checkpointer=checkpointer,
     )
 
@@ -88,6 +93,7 @@ class AgentService:
         self.llm = create_openai_llm()
         self.tools = self._create_tool_list()
         self.checkpointer = PersistentSaver()
+        self.questions = QuestionDAO()
         # 挂载上下文中间件（保留构造兼容性；仅注入技能，base_prompt 固定 BASE，
         # 技能摘要与活跃全文由中间件每轮现取）
         mw = self._build_middleware()
@@ -129,7 +135,41 @@ class AgentService:
         out_chan = out_chan or self.default_out_chan
         self.session_id = session_key or context.get("session_key") or "session-default"
         state = self.agent.get_state(self._thread_config()) if hasattr(self, "checkpointer") else None
-        if self._has_interrupted_turn(state):
+        resume_row = None
+        resume_value = None
+        question_id = pending_question(state) if state is not None else None
+        if question_id:
+            row = self.questions.get(question_id)
+            if row is None:
+                out_chan.write_system_error('等待中的人工问题记录缺失，请核查后 /clear。')
+                return None
+            internal = context.get('_question_ready_id') == question_id and context.get('_event_type') == 'system'
+            if not internal and not actor_matches(row, context):
+                out_chan.write_system_error('当前会话正在等待原发起用户回答，其他入口不能代答。')
+                return {'awaiting_user': True, 'completed': False, '_question_origin': row['origin']}
+            if row['status'] == 'pending':
+                if input_msg.strip() == '/question':
+                    self._present_question(row, out_chan, force=True)
+                    return {'awaiting_user': True, 'completed': False, '_question_origin': row['origin']}
+                try:
+                    value = parse_terminal(row['payload'], input_msg)
+                except ValueError as ex:
+                    out_chan.write_system_error(f'回答格式不正确：{ex}。输入 /question 重看问题，/cancel 取消。')
+                    return {'awaiting_user': True, 'completed': False, '_question_origin': row['origin']}
+                self.questions.submit(question_id, value)
+                row = self.questions.get(question_id)
+            resume_row, resume_value = row, row['result']
+            context = dict(row['origin'])
+            context['session_key'] = row['session_key']
+            input_msg, attachments = row['user_input'], []
+        elif not question_id and input_msg.strip() in {'/cancel', '/question'}:
+            out_chan.write_system_error('当前会话没有等待回答的人工问题。')
+            return None
+        elif context.get('_question_ready_id'):
+            # 已恢复或已清理的重复队列事件不能再次运行模型/工具。
+            self.questions.finish(context['_question_ready_id'])
+            return None
+        if question_id is None and self._has_interrupted_turn(state):
             out_chan.write_system_error(
                 "上轮执行已中断，工具可能已产生副作用，未自动重试。"
                 "请先核实执行结果，再用 /clear 清理中断状态并重新提交请求。"
@@ -152,10 +192,10 @@ class AgentService:
         turn_token = begin_user_turn(input_msg)
         feishu_token = begin_feishu_turn(context)
         notifications, notification_token = begin_notifications(out_chan, context)
+        question_token = begin_question_turn(context, input_msg, self.session_id)
         try:
             result = self.agent.invoke(
-                {
-                    "messages": messages},
+                Command(resume=resume_value) if resume_row else {"messages": messages},
                 config = {
                     "configurable": {
                         **self._thread_config()["configurable"],
@@ -171,15 +211,29 @@ class AgentService:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
             return None
         finally:
+            reset_question_turn(question_token)
             reset_notifications(notification_token)
             reset_feishu_turn(feishu_token)
             reset_user_turn(turn_token)
+        if resume_row:
+            self.questions.finish(resume_row['question_id'])
+            self._close_question(resume_row)
         if selected:
             from dao.attachment import AttachmentDAO
             AttachmentDAO().mark(selected, context, "selected")
             if context.get("source") == "feishu":
                 from channels.device.feishu import discard_pending_images
                 discard_pending_images(context.get("open_id"), context.get("chat_id"), selected)
+        if result.get('__interrupt__'):
+            waiting = next((value.value for value in result['__interrupt__']
+                            if isinstance(value.value, dict) and value.value.get('kind') == 'ask_user_question'), None)
+            if waiting:
+                self._update_stats(callback)
+                row = self.questions.get(waiting['question_id'])
+                self._present_question(row, out_chan)
+                result.update(awaiting_user=True, completed=False, reply_required=False,
+                              _question_origin=row["origin"], question_id=row["question_id"])
+                return result
         self._update_stats(callback)
         context["tokens"] = callback.tokens
         context["context_tokens"] = self.stats.get("context_tokens", {})
@@ -189,6 +243,9 @@ class AgentService:
         final_content = final_message.content if isinstance(final_message, AIMessage) else ""
         result["completed"] = notifications.silent or bool(isinstance(final_content, str) and final_content.strip())
         result["reply_required"] = not notifications.silent
+        if resume_row:
+            result["question_status"] = resume_row["result"]["status"]
+            result["_question_origin"] = resume_row["origin"]
         if notifications.silent:
             result["completion_reason"] = notifications.reason
         elif isinstance(final_content, str) and final_content.strip():
@@ -201,6 +258,38 @@ class AgentService:
         if self.memory:
             self.memory.on_messages(result.get("messages", []))
         return result
+
+    def _close_question(self, row):
+        if row['origin'].get('source') == 'feishu':
+            try:
+                from channels.device.feishu import get_feishu_client
+                client = get_feishu_client()
+                if client is not None:
+                    client.sender.close_question(row)
+            except Exception:
+                pass  # 卡片展示失败不影响持久的结束状态。
+
+    def _present_question(self, row, out_chan, force=False):
+        if row['presented'] and not force:
+            return
+        try:
+            if row['origin'].get('source') == 'feishu':
+                from channels.device.feishu import get_feishu_client
+                client = get_feishu_client()
+                if client is None:
+                    raise ValueError('飞书机器人未连接')
+                message_id = client.sender.send_question(row)
+                self.questions.present(row['question_id'], message_id)
+            else:
+                from channels.out.fanout import FanoutOutputChannel
+                from channels.out.stdout import TerminalOutputChannel
+                channel = next((c for c in out_chan.channels if isinstance(c, TerminalOutputChannel)), None) if isinstance(out_chan, FanoutOutputChannel) else out_chan
+                if channel is None:
+                    raise ValueError('终端输出不可用')
+                channel.write_message(terminal_question(row), row['origin'])
+                self.questions.present(row['question_id'])
+        except Exception:
+            out_chan.write_system_error('人工确认问题发送失败；仍会按时超时取消。可在原入口输入 /question 重发。')
 
     def _update_stats(self, callback: StreamingCallback):
         tokens_stats = callback.tokens
@@ -297,6 +386,11 @@ class AgentService:
 
     def _rebuild_agent(self):
         """仅清理当前 thread，复用持久 saver，并重建中间件与统计。"""
+        cancelled = self.questions.cancel_session(self.session_id)
+        from channels.device.feishu import finish_live_reaction
+        for row in cancelled:
+            self._close_question(row)
+            finish_live_reaction(row['origin'], True)
         self.checkpointer.delete_thread(self._thread_config()["configurable"]["thread_id"])
         mw = self._build_middleware()
         self.agent = _create_agent(self.llm, self.tools, get_system_prompt(), self.checkpointer, middleware=mw)

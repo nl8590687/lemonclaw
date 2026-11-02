@@ -41,7 +41,7 @@ def notify_progress(message: str, kind: Literal['key_progress', 'delivered_resul
 
     简单任务直接最终回复。禁止播报推理、调试信息、每次工具调用或重复内容。
     kind=delivered_result 仅用于已完整满足用户请求的最终交付；普通进度不能标为结果。
-    需要用户回答时发送最终提问并结束本轮，不要用本工具假装等待。
+    需要关键用户回答时使用 ask_user_question，不要用通知工具假装等待。
     """
     state = _current.get()
     if state is None:

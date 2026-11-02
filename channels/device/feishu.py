@@ -180,6 +180,29 @@ class FeishuMessageSender:
 
     # ---- 对外 ----
 
+    def send_question(self, row) -> str:
+        origin = row['origin']
+        target = origin.get('chat_id') or origin['open_id']
+        ok, message_id, _ = self._send_message(target, 'interactive',
+            json.dumps(question_card(row), ensure_ascii=False),
+            'chat_id' if origin.get('chat_id') else 'open_id')
+        if not ok or not message_id:
+            raise ValueError('飞书人工确认卡片发送失败')
+        return message_id
+
+    def close_question(self, row):
+        if not row.get('message_id'):
+            return
+        try:
+            from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+            request = PatchMessageRequest.builder().message_id(row['message_id']).request_body(
+                PatchMessageRequestBody.builder().content(json.dumps(question_closed_card(row), ensure_ascii=False)).build()).build()
+            response = self.client.im.v1.message.patch(request)
+            if not response.success():
+                lark.logger.warning('人工确认卡片状态更新失败')
+        except Exception:
+            lark.logger.warning('人工确认卡片状态更新失败')
+
     def add_reaction(self, message_id: str, emoji_type: str) -> str | None:
         """以当前机器人身份添加消息表情，返回可用于撤销的 reaction_id。"""
         try:
@@ -844,6 +867,57 @@ class FeishuClient:
         return [register_image(self._download_and_save_attachment('image', {'image_key': key}, parent_id), context, i)
                 for i, key in enumerate(keys)]
 
+    def _handle_question_action(self, data):
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            P2CardActionTriggerResponse, CallBackToast, CallBackCard)
+        from dao.question import QuestionDAO
+        from agent.questions import actor_matches, validate_answers
+        response = P2CardActionTriggerResponse()
+        try:
+            event = data.event
+            action = event.action
+            value = action.value or {}
+            if action.tag != 'button':
+                return response
+            if action.name and action.name.startswith('ask_confirm__'):
+                _, question_id, nonce = action.name.split('__', 2)
+                cancel = False
+            elif value.get('action') == 'ask_cancel':
+                question_id, nonce = value.get('question_id'), value.get('nonce')
+                cancel = True
+            else:
+                return response
+            store = QuestionDAO()
+            row = store.get(question_id)
+            ctx = {'source': 'feishu', 'sender_type': 'user', 'open_id': event.operator.open_id,
+                   'chat_id': event.context.open_chat_id}
+            import secrets
+            if (row is None or not isinstance(nonce, str) or not secrets.compare_digest(nonce, row['nonce'])
+                    or row['message_id'] != event.context.open_message_id or not actor_matches(row, ctx)):
+                raise ValueError('问题不属于当前用户/卡片，或卡片已失效')
+            if row['finished'] or row['status'] != 'pending':
+                raise ValueError('此问题已处理或已到期，请勿重复提交')
+            if cancel:
+                result = {'status': 'cancelled', 'action': 'cancel', 'answers': []}
+            else:
+                form = action.form_value or {}
+                fields = {}
+                for i, question in enumerate(row['payload']['questions'], 1):
+                    raw = form.get(f'q{i}')
+                    fields[str(i)] = raw if question['kind'] == 'text' or isinstance(raw, list) else [raw] if isinstance(raw, str) else []
+                    fields[f'{i}_other'] = form.get(f'q{i}_other', '')
+                result = validate_answers(row['payload'], fields)
+            if not store.submit(question_id, result):
+                raise ValueError('问题已超时或已处理，本次答案未提交')
+            row = store.get(question_id)
+            response.toast = CallBackToast({'type': 'success', 'content': '已取消，本轮将结束' if cancel else '已提交，继续执行'})
+            response.card = CallBackCard({'type': 'raw', 'data': question_closed_card(row)})
+        except (ValueError, TypeError, AttributeError) as ex:
+            response.toast = CallBackToast({'type': 'error', 'content': str(ex)[:200]})
+        except Exception:
+            response.toast = CallBackToast({'type': 'error', 'content': '暂时无法提交，请稍后重试；等待时限不变'})
+        return response
+
     # ---- 生命周期 ----
 
     def start(self) -> None:
@@ -853,6 +927,7 @@ class FeishuClient:
 
         event_handler = lark.EventDispatcherHandler.builder("", "") \
             .register_p2_im_message_receive_v1(self._handle_message) \
+            .register_p2_card_action_trigger(self._handle_question_action) \
             .register_p2_im_message_reaction_created_v1(lambda _: None) \
             .register_p2_im_message_reaction_deleted_v1(lambda _: None) \
             .build()
@@ -968,3 +1043,57 @@ def finish_live_reaction(context, completed):
     except Exception:
         import logging
         logging.getLogger(__name__).warning('飞书状态表情清理失败，主流程继续')
+
+
+def question_card(row):
+    """原生 Card 2.0 表单；取消按钮置于 form 外以免必填验证阻止取消。"""
+    from datetime import datetime
+    spec = row['payload']
+    deadline = datetime.fromtimestamp(row['deadline']).astimezone().isoformat(timespec='minutes')
+    form = []
+    for i, question in enumerate(spec['questions'], 1):
+        if question['kind'] == 'text':
+            form.append({'tag': 'input', 'name': f'q{i}', 'label': {'tag': 'plain_text', 'content': question['prompt']},
+                         'required': True, 'max_length': 1000, 'width': 'fill'})
+        else:
+            form.append({'tag': 'markdown', 'content': f"**{i}. {question['prompt']}**"})
+            options = [{'text': {'tag': 'plain_text', 'content': text}, 'value': str(j)}
+                       for j, text in enumerate(question['options'], 1)]
+            options.append({'text': {'tag': 'plain_text', 'content': '以上均不是（请在下方填写）'}, 'value': '0'})
+            form.append({'tag': 'select_static' if question['kind'] == 'single' else 'multi_select_static',
+                         'name': f'q{i}', 'required': True, 'width': 'fill', 'options': options,
+                         'placeholder': {'tag': 'plain_text', 'content': '请选择'}})
+            form.append({'tag': 'input', 'name': f'q{i}_other', 'max_length': 1000, 'width': 'fill',
+                         'label': {'tag': 'plain_text', 'content': '以上均不是：填写实际内容（选择 0 时必填）'}})
+    form.append({'tag': 'button', 'name': f"ask_confirm__{row['question_id']}__{row['nonce']}",
+                 'text': {'tag': 'plain_text', 'content': '确定'}, 'type': 'primary_filled',
+                 'form_action_type': 'submit'})
+    return {'schema': '2.0', 'config': {'update_multi': True, 'enable_forward': False},
+            'header': {'template': 'blue', 'title': {'tag': 'plain_text', 'content': '请求用户确认'}},
+            'body': {'elements': [
+                {'tag': 'markdown', 'content': spec['reason']},
+                {'tag': 'markdown', 'content': f"截止时间 {deadline}；超时按取消结束。"},
+                {'tag': 'form', 'name': 'ask_form', 'elements': form},
+                {'tag': 'button', 'text': {'tag': 'plain_text', 'content': '取消'}, 'type': 'default',
+                 'behaviors': [{'type': 'callback', 'value': {'action': 'ask_cancel',
+                     'question_id': row['question_id'], 'nonce': row['nonce']}}]}]}}
+
+
+def question_closed_card(row):
+    label = {'confirmed': '已提交，继续执行', 'cancelled': '已取消', 'timeout': '已超时，按取消结束'}.get(row['status'], '等待用户确认')
+    elements = [{'tag': 'markdown', 'content': label},
+                {'tag': 'div', 'text': {'tag': 'plain_text', 'content': row['payload']['reason']}}]
+    answers = (row.get('result') or {}).get('answers', [])
+    for i, question in enumerate(row['payload']['questions'], 1):
+        lines = [f"{i}. {question['prompt']}"]
+        if question['kind'] != 'text':
+            lines.extend(f"{j}. {option}" for j, option in enumerate(question['options'], 1))
+            lines.append('0. 以上均不是')
+        if row['status'] == 'confirmed' and i <= len(answers):
+            lines.append('用户答案：' + '、'.join(answers[i - 1]['values']))
+        else:
+            lines.append('用户答案：未提交')
+        elements.append({'tag': 'div', 'text': {'tag': 'plain_text', 'content': '\n'.join(lines)}})
+    return {'schema': '2.0', 'config': {'update_multi': True, 'enable_forward': False},
+            'header': {'template': 'grey', 'title': {'tag': 'plain_text', 'content': '用户确认状态'}},
+            'body': {'elements': elements}}

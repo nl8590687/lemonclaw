@@ -20,6 +20,7 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs.llm_result import LLMResult
+from langgraph.errors import GraphInterrupt
 
 from channels.out.base import BaseOutChannel
 
@@ -78,4 +79,7 @@ class StreamingCallback(BaseCallbackHandler):
             self.console.write_tool_result(output)
 
     def on_tool_error(self, error, **kwargs):
+        # HITL 使用控制流异常挂起图；它不是工具失败，不能发送告警。
+        if isinstance(error, GraphInterrupt):
+            return
         self.console.write_tool_error(error)

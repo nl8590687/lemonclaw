@@ -171,7 +171,7 @@ class WorkflowBuilder:
         tool_names = nc.get("tools", [])
         selected = []
         for tn in tool_names:
-            if tn in {"notify_progress", "finish_silently"}:
+            if tn in {"notify_progress", "finish_silently", "ask_user_question"}:
                 raise ValueError("通知与静默结束工具仅供主 Agent 使用")
             if tn in {"load_skill", "unload_skill"}:
                 raise ValueError("子 Agent 请通过 skills 字段声明技能")

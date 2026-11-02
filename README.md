@@ -445,3 +445,19 @@ Licensed under the [Apache License 2.0](LICENSE). Copyright © 2026 LemonClaw Co
 The main agent normally sends a final reply. `notify_progress(message, kind)` sends necessary milestones, blockers, or a complete result through the current output channel, with duplicate suppression and a limit of three notifications of up to 2000 characters per turn.
 
 `finish_silently(reason, outcome)` must be called alone. `no_action_needed` is allowed for background webhook, system, Workflow completion, and custom events; user messages and scheduled tasks require a reply. `already_delivered` requires a successful `notify_progress(kind="delivered_result")` in this turn. Progress alone does not qualify. Rejected requests return to the model. Successful requests save the tool result before ending the graph and still complete Typing → DONE. Both tools are restricted to the main agent. Prompts require reports, errors, and questions to be delivered; the model remains responsible for deciding whether a background event actually needs attention.
+
+### Ask the user a critical question (main agent only)
+
+`ask_user_question(reason, questions, timeout_seconds=3600)` persists a LangGraph interrupt and releases the main loop. Each question has `prompt`, `kind` (`single`, `multiple`, `text`), and `options` for choices. Up to 8 questions and 12 choices per question are supported. Call this tool alone, only for decisions that need user input. Workflow human nodes can be relayed by the main agent; only a confirmed answer should resume the Workflow.
+
+Timeouts must be **1200–86400 seconds**. Confirmation returns `status=confirmed`, `action=continue`, and actual answer values. Cancellation returns `status=cancelled`; expiration returns `status=timeout`; both use `action=cancel`, empty answers, and end the main turn without another model call. The Workflow itself remains paused.
+
+Terminal input: `1` for a single choice, `1,2` for multiple choices, `0:Other actual answer` for an alternative, and `1:Name,2:Age` for multiple text fields. Whitespace around fields is ignored. Multiple choice questions can use `1:1,3,2:2`. A comma followed by a question number and colon starts the next field. Option zero is exclusive and requires text.
+
+Feishu uses native Card 2.0 dropdowns, text inputs, and a form with confirm/cancel controls. Cancel is outside the form so missing required fields cannot block it. Enable **`card.action.trigger`** in the app's callback configuration; callbacks use the existing WebSocket connection. Answers are restricted to the original user, channel, card message, and random credential. Stale or repeated submissions cannot resume twice. No bridge callback tokens are involved: LemonClaw's own bot SDK handles these callbacks.
+
+Use `/question` in the original channel to resend the question without resetting its deadline, `/cancel` to cancel, or `/clear` to clear the session and invalidate old questions. Waiting state and deadlines survive restart; offline time counts toward the timeout. The main loop checks results and deadlines once per second while idle, or at its next scheduling opportunity after other work. Feishu Typing stays on the original request while waiting and becomes DONE on completion, cancellation, or timeout. Question display is restricted to its channel; ordinary output routing is unchanged.
+
+This only resumes explicit question interrupts, not arbitrary interrupted tools. Tests use local fake providers and SDK callbacks; real tenant rendering and callback configuration require manual verification.
+
+A human-confirmation interrupt is control flow, not a tool error. The original tool call remains pending while waiting. The internal wake-up only invokes `Command(resume=...)`, without adding a new user message. Confirmation, cancellation, and timeout complete the original tool-call ID; actual tool failures are still reported.
