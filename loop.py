@@ -24,6 +24,7 @@ from channels.ins import TerminalInput, WebhookInput, FeishuInput, CrontabInput
 from channels.out import BaseOutChannel, build_output_channel
 from command import handle_command
 from config import get_global_config
+from dao.question import QuestionDAO
 
 
 _event_sources = []
@@ -80,12 +81,23 @@ def loop_forever():
         out_chan = svr.default_out_chan
         reaction_context = None
         reaction_completed = False
+        reaction_waiting = False
+        question_origin = None
         try:
-            event_msg: EventMessage = msg_bus.poll()
+            store = getattr(svr, 'questions', None)
+            ready = store.ready() if isinstance(store, QuestionDAO) else []
+            if ready:
+                row = ready[0]
+                from channels.bus import EventPriority
+                origin = dict(row['origin'], session_key=row['session_key'], _question_ready_id=row['question_id'])
+                event_msg = EventMessage(event_type=EventType.SYSTEM, context=origin,
+                                         content={'text': '[人工确认结果]'}, priority=EventPriority.HIGH)
+            else:
+                event_msg: EventMessage = msg_bus.poll(timeout=1)
             if not event_msg:
                 continue
             from channels.device.feishu import reaction_eligible, turn_completed
-            if event_msg.event_type == EventType.LARK_MESSAGE and reaction_eligible(event_msg.context):
+            if (event_msg.event_type == EventType.LARK_MESSAGE or event_msg.context.get("_question_ready_id")) and reaction_eligible(event_msg.context):
                 reaction_context = event_msg.context
             event_msg_content = str(event_msg.content) if len(str(event_msg.content)) < 100 else str(event_msg.content)[:100]
             svr.default_out_chan.print(Text(f"\n\n[系统] 收到事件: {event_msg.event_type.value} {event_msg_content}\n\n", style="dim"))
@@ -116,24 +128,36 @@ def loop_forever():
                     continue
                 result = svr.run(question, event_msg.context, out_chan, attachments=selected)
                 reaction_completed = turn_completed(result)
+                reaction_waiting = isinstance(result, dict) and result.get("awaiting_user", False)
+                question_origin = result.get("_question_origin") if isinstance(result, dict) else None
                 svr.trim_msg_history()
                 continue
-            if msg_text.strip().startswith("/"):
+            if msg_text.strip() in {"/cancel", "/question"}:
+                result = svr.run(msg_text.strip(), event_msg.context, out_chan)
+                reaction_completed = turn_completed(result)
+                reaction_waiting = isinstance(result, dict) and result.get("awaiting_user", False)
+                question_origin = result.get("_question_origin") if isinstance(result, dict) else None
+            elif msg_text.strip().startswith("/"):
                 if not handle_command(out_chan, agent_service=svr, command=msg_text) and is_terminal_event:
                     break
             else:
                 context = event_msg.context
                 result = svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
                 reaction_completed = turn_completed(result)
+                reaction_waiting = isinstance(result, dict) and result.get("awaiting_user", False)
+                question_origin = result.get("_question_origin") if isinstance(result, dict) else None
             svr.trim_msg_history()
         except KeyboardInterrupt:
             break
         except Exception as ex:
             out_chan.write_system_error(f"error: {ex}")
         finally:
-            if reaction_context is not None:
-                from channels.device.feishu import finish_live_reaction
+            from channels.device.feishu import finish_live_reaction
+            if reaction_context is not None and (not reaction_waiting or
+                    reaction_context.get('message_id') != (question_origin or {}).get('message_id')):
                 finish_live_reaction(reaction_context, reaction_completed)
+            if question_origin and not reaction_waiting and question_origin.get('message_id') != (reaction_context or {}).get('message_id'):
+                finish_live_reaction(question_origin, reaction_completed)
 
     stop_event_source()
     # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）

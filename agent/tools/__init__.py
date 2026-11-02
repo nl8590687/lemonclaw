@@ -16,6 +16,7 @@
 工具模块
 """
 from agent.tools.notification_tool import notify_progress, finish_silently
+from agent.tools.question_tool import ask_user_question
 from typing import Any
 
 from agent.tools.bocha_search import BochaSearchTool, create_bocha_tool
@@ -74,6 +75,7 @@ def create_tool_list() -> dict[str, Any]:
     config = get_global_config()
     file_safe_dirs = config.FILE_SAFE_DIRS.split(";")
     tools = [
+        ask_user_question,
         notify_progress,
         finish_silently,
         create_time_tool(),
