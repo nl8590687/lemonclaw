@@ -100,7 +100,10 @@ def loop_forever():
             if (event_msg.event_type == EventType.LARK_MESSAGE or event_msg.context.get("_question_ready_id")) and reaction_eligible(event_msg.context):
                 reaction_context = event_msg.context
             event_msg_content = str(event_msg.content) if len(str(event_msg.content)) < 100 else str(event_msg.content)[:100]
-            svr.default_out_chan.print(Text(f"\n\n[系统] 收到事件: {event_msg.event_type.value} {event_msg_content}\n\n", style="dim"))
+            if event_msg.context.get('_question_ready_id'):
+                svr.default_out_chan.print(Text(f"\n[系统] 恢复人工确认: {event_msg.context['_question_ready_id']}\n", style="dim"))
+            else:
+                svr.default_out_chan.print(Text(f"\n\n[系统] 收到事件: {event_msg.event_type.value} {event_msg_content}\n\n", style="dim"))
             msg_text: str = event_msg.content.get("text", "")
             attachments = (
                 event_msg.context.get("attachments")

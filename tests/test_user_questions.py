@@ -371,3 +371,46 @@ def test_mixed_question_batch_cannot_execute_side_effect(database):
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize('outcome', ['confirmed', 'cancelled', 'timeout'])
+def test_hitl_pause_is_not_an_error_and_preserves_exact_tool_pair(database, outcome):
+    service = make_service(responses=[ask_message(), AIMessage(content='后续结果')], tools=[ask_user_question])
+    try:
+        waiting = service.run('请提问', {})
+        service.default_out_chan.write_tool_error.assert_not_called()
+        service.default_out_chan.write_system_error.assert_not_called()
+        before = service._current_messages()
+        ai = next(m for m in before if isinstance(m, AIMessage) and m.tool_calls)
+        call_id = ai.tool_calls[0]['id']
+        assert not any(isinstance(m, ToolMessage) and m.tool_call_id == call_id for m in before)
+        row = service.questions.get(waiting['question_id'])
+        if outcome == 'timeout':
+            service.questions.ready(now=row['deadline']+1)
+            result = service.run('[人工确认结果]', {'_event_type':'system','_question_ready_id':row['question_id']})
+        else:
+            result = service.run('1' if outcome == 'confirmed' else '/cancel', {})
+        service.default_out_chan.write_tool_error.assert_not_called()
+        service.default_out_chan.write_system_error.assert_not_called()
+        after = service._current_messages()
+        assert len([m for m in after if isinstance(m, AIMessage)
+                    for c in m.tool_calls if c['id'] == call_id]) == 1
+        answers = [m for m in after if isinstance(m, ToolMessage) and m.tool_call_id == call_id]
+        assert len(answers) == 1 and json.loads(answers[0].content)['status'] == outcome
+        assert [m.content for m in after if getattr(m, 'type', '') == 'human'] == ['请提问']
+        assert result['question_status'] == outcome
+    finally:
+        service.close()
+
+
+def test_callback_suppresses_only_interrupt_not_real_failures():
+    from agent.callback import StreamingCallback
+    from langgraph.errors import GraphInterrupt
+    from langgraph.types import Interrupt
+    output = MagicMock()
+    callback = StreamingCallback(output)
+    callback.on_tool_error(GraphInterrupt((Interrupt(value={'kind':'ask_user_question'}),)))
+    output.write_tool_error.assert_not_called()
+    error = RuntimeError('真实工具失败')
+    callback.on_tool_error(error)
+    output.write_tool_error.assert_called_once_with(error)
