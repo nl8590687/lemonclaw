@@ -1081,5 +1081,19 @@ def question_card(row):
 
 def question_closed_card(row):
     label = {'confirmed': '已提交，继续执行', 'cancelled': '已取消', 'timeout': '已超时，按取消结束'}.get(row['status'], '等待用户确认')
-    return {'schema': '2.0', 'header': {'template': 'grey', 'title': {'tag': 'plain_text', 'content': '用户确认状态'}},
-            'body': {'elements': [{'tag': 'markdown', 'content': label}]}}
+    elements = [{'tag': 'markdown', 'content': label},
+                {'tag': 'div', 'text': {'tag': 'plain_text', 'content': row['payload']['reason']}}]
+    answers = (row.get('result') or {}).get('answers', [])
+    for i, question in enumerate(row['payload']['questions'], 1):
+        lines = [f"{i}. {question['prompt']}"]
+        if question['kind'] != 'text':
+            lines.extend(f"{j}. {option}" for j, option in enumerate(question['options'], 1))
+            lines.append('0. 以上均不是')
+        if row['status'] == 'confirmed' and i <= len(answers):
+            lines.append('用户答案：' + '、'.join(answers[i - 1]['values']))
+        else:
+            lines.append('用户答案：未提交')
+        elements.append({'tag': 'div', 'text': {'tag': 'plain_text', 'content': '\n'.join(lines)}})
+    return {'schema': '2.0', 'config': {'update_multi': True, 'enable_forward': False},
+            'header': {'template': 'grey', 'title': {'tag': 'plain_text', 'content': '用户确认状态'}},
+            'body': {'elements': elements}}

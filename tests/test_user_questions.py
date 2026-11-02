@@ -414,3 +414,37 @@ def test_callback_suppresses_only_interrupt_not_real_failures():
     error = RuntimeError('真实工具失败')
     callback.on_tool_error(error)
     output.write_tool_error.assert_called_once_with(error)
+
+
+@pytest.mark.parametrize('kind,fields', [
+    ('single', {'1': ['1']}),
+    ('multiple', {'1': ['1', '2']}),
+    ('single', {'1': ['0'], '1_other': '实际是小王'}),
+    ('text', {'1': '小明, 28岁'}),
+])
+def test_closed_card_preserves_questions_options_and_answers(database, kind, fields):
+    from channels.device.feishu import question_closed_card
+    store, row = card_row(database, kind)
+    result = validate_answers(row['payload'], fields)
+    assert store.submit(row['question_id'], result)
+    card = question_closed_card(store.get(row['question_id']))
+    text = '\n'.join(element.get('text', {}).get('content', '') for element in card['body']['elements'])
+    assert row['payload']['reason'] in text
+    assert row['payload']['questions'][0]['prompt'] in text
+    for option in row['payload']['questions'][0]['options']:
+        assert option in text
+    for value in result['answers'][0]['values']:
+        assert value in text
+    assert '用户答案：' in text
+    assert not any(element['tag'] in ('form', 'button') for element in card['body']['elements'])
+
+
+@pytest.mark.parametrize('status', ['cancelled', 'timeout'])
+def test_closed_card_retains_unanswered_questions(database, status):
+    from channels.device.feishu import question_closed_card
+    _, row = card_row(database)
+    row['status'] = status
+    row['result'] = {'status': status, 'action': 'cancel', 'answers': []}
+    card = question_closed_card(row)
+    assert row['payload']['questions'][0]['prompt'] in card['body']['elements'][2]['text']['content']
+    assert '用户答案：未提交' in card['body']['elements'][2]['text']['content']
