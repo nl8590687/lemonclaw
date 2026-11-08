@@ -1,5 +1,5 @@
 # Runtime dependency lock for LemonClaw.
-# Snapshot: Python 3.14.8, 2026-10-24. Keep in sync with requirements.txt.
+# Snapshot: Python 3.14.8, 2026-11-08. Keep in sync with requirements.txt.
 # Install with: pip install -e .[dev] -c constraints.txt
 aiosqlite==0.22.1
 annotated-types==0.8.0
@@ -20,17 +20,17 @@ jieba==0.42.1
 jiter==0.17.0
 jsonpatch==1.36
 jsonpointer==3.4
-langchain==1.3.2
-langchain-core==1.6.12
-langchain-openai==1.2.2
+langchain==1.4.9
+langchain-core==1.7.6
+langchain-openai==1.7.4
 langchain-protocol==0.0.20
-langgraph==1.2.16
-langgraph-checkpoint==4.3.0
-langgraph-checkpoint-sqlite==3.1.2
+langgraph==1.2.20
+langgraph-checkpoint==4.3.1
+langgraph-checkpoint-sqlite==3.1.3
 langgraph-prebuilt==1.1.1
 langgraph-sdk==0.4.8
 langsmith==0.14.11
-lark-oapi==1.6.8
+lark-oapi==1.7.5
 markdown-it-py==4.2.0
 mdurl==0.1.2
 openai==2.54.0
@@ -39,9 +39,9 @@ ormsgpack==1.13.0
 packaging==26.3
 pluggy==1.7.0
 pycryptodome==4.1.0
-pydantic==2.13.4
-pydantic-core==2.46.4
-pydantic-settings==2.14.1
+pydantic==2.14.3
+pydantic-core==2.50.4
+pydantic-settings==2.16.2
 Pygments==2.21.0
 pytest==9.1.1
 python-dotenv==1.2.4
