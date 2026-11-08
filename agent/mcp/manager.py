@@ -116,7 +116,7 @@ class MCPManager:
                 logger.warning(f"mcp.json 非法 server_id 跳过: {sid!r}")
                 continue
             url = cfg.get("url", "")
-            if not _valid_url(url):
+            if not _valid_url(url) and not isinstance(cfg.get("command"), str):
                 logger.warning(f"mcp.json {sid} 非法 url 跳过: {url!r}")
                 continue
             headers = cfg.get("headers", {}) or {}
@@ -124,7 +124,7 @@ class MCPManager:
                 logger.warning(f"mcp.json {sid} headers 非对象跳过")
                 continue
             auto_connect = bool(cfg.get("auto_connect", True))
-            server = MCPServer(server_id=sid, url=url, headers=headers, auto_connect=auto_connect)
+            server = MCPServer(server_id=sid, url=url or f"stdio://{sid}", headers=headers, auto_connect=auto_connect)
             try:
                 self.dao.upsert_metadata(server)
             except Exception as e:
@@ -150,6 +150,7 @@ class MCPManager:
         return MCPConnection(
             server.server_id, server.url, server.headers,
             self.connect_timeout, self.call_timeout, self.result_max_chars,
+            options=self._load_mcp_json().get(server.server_id, {}),
         )
 
     # ============ 连接管理 ============
@@ -273,7 +274,7 @@ class MCPManager:
 
         单服务端超 max_tools 截断并 log；全局超 GLOBAL_TOOL_HARD_CAP 停止收集。
         """
-        from agent.mcp.tools import MCPToolWrapper, _json_schema_to_pydantic, _sanitize_tool_name
+        from agent.mcp.tools import MCPToolWrapper, _sanitize_tool_name
 
         tools: list = []
         used_names: set[str] = set()
@@ -289,20 +290,34 @@ class MCPManager:
                 )
                 remote_tools = remote_tools[: self.max_tools]
             for t in remote_tools:
-                base = f"mcp__{server_id}__{_sanitize_tool_name(t.name)}"
+                base = f"mcp__{server_id}__{_sanitize_tool_name(t.name)}"[:64]
                 tool_name = base
                 i = 2
                 while tool_name in used_names:
-                    tool_name = f"{base}_{i}"
+                    tool_name = f"{base[:64-len(str(i))-1]}_{i}"
                     i += 1
                 used_names.add(tool_name)
                 desc = f"[MCP/{server_id}] {t.description}"[:1024]
-                schema = _json_schema_to_pydantic(t.input_schema, f"{server_id}_{t.name}")
+                schema = t.input_schema
                 tools.append(MCPToolWrapper(conn, self, t.name, desc, schema, tool_name))
                 total += 1
                 if total >= self.GLOBAL_TOOL_HARD_CAP:
                     logger.warning(f"全局 MCP 工具数达硬上限 {self.GLOBAL_TOOL_HARD_CAP}，停止收集")
                     return tools
+        # Register legacy remote tools first: optional protocol helpers must not
+        # displace existing tools when the global cap is reached.
+        for server_id, conn in self._connections.items():
+            if (conn.status == 'connected' and len(conn.list_tools()) < self.max_tools
+                    and total < self.GLOBAL_TOOL_HARD_CAP) and any(
+                    key in conn.capabilities for key in ('resources', 'prompts', 'completions')):
+                from agent.mcp.tools import create_protocol_tool
+                base = f"mcp__{server_id}__protocol"[:64]
+                name, index = base, 2
+                while name in used_names:
+                    name, index = f"{base[:64-len(str(index))-1]}_{index}", index + 1
+                used_names.add(name)
+                tools.append(create_protocol_tool(conn, name))
+                total += 1
         return tools
 
     def list_tools(self, server_id: str) -> list[ToolInfo]:
@@ -334,6 +349,23 @@ class MCPManager:
             except Exception:
                 pass
         return result
+
+    def invoke_tool(self, server_id, tool_name, arguments, tool_call_id, config=None):
+        """Agent path: preserve official ToolMessage content, artifact, and status."""
+        conn = self._connections.get(server_id)
+        if conn is None or conn.status != "connected":
+            raise RuntimeError(f"MCP 服务 {server_id} 未连接，请执行 /mcp reconnect {server_id}")
+        message = conn.invoke_tool(tool_name, arguments, tool_call_id, config)
+        if message.status != "error":
+            try:
+                self.dao.increment_access(server_id, datetime.now())
+            except Exception:
+                logger.warning("MCP 调用已完成，但统计更新失败: %s", server_id)
+        return message
+
+    def close(self):
+        for server_id in list(self._connections):
+            self.disconnect(server_id)
 
     # ============ 查询 ============
 

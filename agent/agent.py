@@ -194,6 +194,9 @@ class AgentService:
         notifications, notification_token = begin_notifications(out_chan, context)
         question_token = begin_question_turn(context, input_msg, self.session_id)
         try:
+            if resume_row and '_mcp_requests' in resume_row['payload']:
+                from agent.mcp.elicitation import resume_value as mcp_resume_value
+                resume_value = mcp_resume_value(resume_row)
             result = self.agent.invoke(
                 Command(resume=resume_value) if resume_row else {"messages": messages},
                 config = {

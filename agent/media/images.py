@@ -6,7 +6,7 @@ from pathlib import Path
 import warnings
 
 from PIL import Image
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from dao.attachment import AttachmentDAO, attachment_scope
 
@@ -87,9 +87,9 @@ def adapt_messages(messages, enabled):
         if not enabled:
             result.append(msg.model_copy(update={'content': str(msg.content) + '\n[视觉功能关闭，仅保留图片引用，未提供图片内容]'}))
             continue
-        if not isinstance(msg, HumanMessage):
-            raise ValueError('图片引用只支持用户消息')
-        content = [{'type': 'text', 'text': str(msg.content)}]
+        if not isinstance(msg, (HumanMessage, ToolMessage)):
+            raise ValueError('图片引用只支持用户或工具消息')
+        content = list(msg.content) if isinstance(msg.content, list) else [{'type': 'text', 'text': str(msg.content)}]
         for ref in refs:
             count += 1
             if count > MAX_IMAGES:
@@ -109,3 +109,43 @@ def adapt_messages(messages, enabled):
                             {'type': 'image_url', 'image_url': {'url': f'data:{actual["mime_type"]};base64,{b64}'}}])
         result.append(msg.model_copy(update={'content': content}))
     return result, count > 0
+
+
+def persist_tool_images(message, context):
+    """Store MCP image bytes as scoped attachments; checkpoints keep references."""
+    from dao.db import get_db_path
+    if not isinstance(message.content, list):
+        return message
+    refs, content = [], []
+    total = 0
+    for block in message.content:
+        if not isinstance(block, dict) or block.get('type') != 'image' or 'base64' not in block:
+            content.append(block)
+            continue
+        encoded = block['base64']
+        if len(encoded) > MAX_IMAGE_BYTES * 4 // 3 + 8:
+            raise ValueError('MCP 图片超过单图 10 MiB 限制')
+        data = base64.b64decode(encoded, validate=True)
+        total += len(data)
+        if total > MAX_TOTAL_BYTES or len(refs) >= MAX_IMAGES:
+            raise ValueError('MCP 图片超过单次大小或数量限制')
+        digest = hashlib.sha256(data).hexdigest()
+        directory = get_db_path().parent / 'attachments' / 'mcp'
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = directory / digest
+        # Exclusive creation and fixed digest names avoid remote-controlled paths.
+        try:
+            with path.open('xb') as stream:
+                path.chmod(0o600)
+                stream.write(data)
+        except FileExistsError:
+            pass
+        metadata, _ = inspect_image(path)
+        metadata['message_id'] = f'mcp:{message.tool_call_id}:{digest}'
+        item = AttachmentDAO().register(metadata, context, len(refs))
+        refs.append({'attachment_id': item['attachment_id'], 'scope': attachment_scope(context), 'sha256': digest})
+        content.append({'type': 'text', 'text': f'MCP 图片 {item["attachment_id"]}'})
+    if not refs:
+        return message
+    return message.model_copy(update={'content': content,
+        'additional_kwargs': {**message.additional_kwargs, REFS: refs}})
