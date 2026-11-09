@@ -78,6 +78,12 @@ def format_attachment_message(attachments: list[dict[str, Any]] | None) -> str:
     return "\n".join(lines)
 
 
+_RESUME_TRIGGERS = {
+    "继续", "继续吧", "继续执行", "接着", "接着做", "恢复", "恢复执行",
+    "continue", "resume", "go on",
+}
+
+
 class AgentService:
     def __init__(self):
         config = get_global_config()
@@ -169,13 +175,7 @@ class AgentService:
             # 已恢复或已清理的重复队列事件不能再次运行模型/工具。
             self.questions.finish(context['_question_ready_id'])
             return None
-        if question_id is None and self._has_interrupted_turn(state):
-            out_chan.write_system_error(
-                "上轮执行已中断，工具可能已产生副作用，未自动重试。"
-                "请先核实执行结果，再用 /clear 清理中断状态并重新提交请求。"
-            )
-            return None
-        callback = StreamingCallback(out_chan)
+        interrupted = question_id is None and self._has_interrupted_turn(state)
         messages: list[BaseMessage] = []
         attachment_note = format_attachment_message(attachments)
         if attachment_note:
@@ -191,31 +191,27 @@ class AgentService:
             messages.append(HumanMessage(content=input_msg))
         turn_token = begin_user_turn(input_msg)
         feishu_token = begin_feishu_turn(context)
-        notifications, notification_token = begin_notifications(out_chan, context)
         question_token = begin_question_turn(context, input_msg, self.session_id)
         try:
+            if interrupted:
+                out_chan.print("[系统] 检测到未完成的上轮执行，正在自动继续...\n")
+                result, notifications = self._invoke_agent(None, context, out_chan)
+                result = self._complete_result(result, notifications, context, out_chan)
+                if (result.get("awaiting_user") or not input_msg.strip()
+                        or (not attachments and self._is_resume_trigger(input_msg))):
+                    return result
             if resume_row and '_mcp_requests' in resume_row['payload']:
                 from agent.mcp.elicitation import resume_value as mcp_resume_value
                 resume_value = mcp_resume_value(resume_row)
-            result = self.agent.invoke(
+            result, notifications = self._invoke_agent(
                 Command(resume=resume_value) if resume_row else {"messages": messages},
-                config = {
-                    "configurable": {
-                        **self._thread_config()["configurable"],
-                        "origin_context": origin_context({"configurable": {"origin_context": context}}),
-                    },
-                    "callbacks": [callback],
-                    "recursion_limit": self.max_iterations * 3,  # 每轮新增完成检查节点，保留原模型/工具轮次预算
-                },
-                # 工具开始执行前必须提交调用状态，避免 SIGKILL 丢失中断证据。
-                durability="sync",
+                context, out_chan,
             )
         except GraphRecursionError:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
             return None
         finally:
             reset_question_turn(question_token)
-            reset_notifications(notification_token)
             reset_feishu_turn(feishu_token)
             reset_user_turn(turn_token)
         if resume_row:
@@ -227,20 +223,49 @@ class AgentService:
             if context.get("source") == "feishu":
                 from channels.device.feishu import discard_pending_images
                 discard_pending_images(context.get("open_id"), context.get("chat_id"), selected)
+        return self._complete_result(result, notifications, context, out_chan, resume_row)
+
+    @staticmethod
+    def _is_resume_trigger(input_msg: str) -> bool:
+        normalized = input_msg.strip().lower().rstrip("。.!！?？")
+        return normalized in _RESUME_TRIGGERS
+
+    def _invoke_agent(self, graph_input, context: dict, out_chan: BaseOutChannel):
+        callback = StreamingCallback(out_chan)
+        notifications, notification_token = begin_notifications(out_chan, context)
+        try:
+            result = self.agent.invoke(
+                graph_input,
+                config={
+                    "configurable": {
+                        **self._thread_config()["configurable"],
+                        "origin_context": origin_context({"configurable": {"origin_context": context}}),
+                    },
+                    "callbacks": [callback],
+                    "recursion_limit": self.max_iterations * 3,  # 每轮新增完成检查节点，保留原模型/工具轮次预算
+                },
+                # 工具开始执行前必须提交调用状态，避免 SIGKILL 丢失中断证据。
+                durability="sync",
+            )
+        finally:
+            reset_notifications(notification_token)
+        self._update_stats(callback)
+        context["tokens"] = callback.tokens
+        context["context_tokens"] = self.stats.get("context_tokens", {})
+        context["messages"] = self.stats.get("context_messages", {})
+        return result, notifications
+
+    def _complete_result(self, result: dict, notifications, context: dict, out_chan: BaseOutChannel,
+                         resume_row=None) -> dict:
         if result.get('__interrupt__'):
             waiting = next((value.value for value in result['__interrupt__']
                             if isinstance(value.value, dict) and value.value.get('kind') == 'ask_user_question'), None)
             if waiting:
-                self._update_stats(callback)
                 row = self.questions.get(waiting['question_id'])
                 self._present_question(row, out_chan)
                 result.update(awaiting_user=True, completed=False, reply_required=False,
                               _question_origin=row["origin"], question_id=row["question_id"])
                 return result
-        self._update_stats(callback)
-        context["tokens"] = callback.tokens
-        context["context_tokens"] = self.stats.get("context_tokens", {})
-        context["messages"] = self.stats.get("context_messages", {})
         messages = result.get("messages", [])
         final_message = messages[-1] if messages else None
         final_content = final_message.content if isinstance(final_message, AIMessage) else ""
