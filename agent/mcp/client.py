@@ -23,7 +23,7 @@ import atexit
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 import logging
-from threading import Thread
+from threading import Thread, current_thread
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -140,13 +140,18 @@ class MCPConnection:
 
     def disconnect(self):
         atexit.unregister(self.disconnect)
-        if self._loop and self._loop.is_running():
+        thread, loop = self._thread, self._loop
+        if thread and thread.is_alive() and loop and loop.is_running():
             if self._stop:
-                self._loop.call_soon_threadsafe(self._stop.set)
-            self._thread.join(timeout=self.connect_timeout)
-            if self._thread.is_alive() and self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._owner.cancel)
-                self._thread.join(timeout=5)
+                loop.call_soon_threadsafe(self._stop.set)
+            thread.join(timeout=self.connect_timeout)
+            if thread.is_alive() and loop.is_running() and self._owner is not None:
+                loop.call_soon_threadsafe(self._owner.cancel)
+                thread.join(timeout=5)
+        # The worker may already have closed its loop while the thread is still
+        # finishing teardown. Wait for it before reporting disconnect/failure.
+        if thread and thread.is_alive() and thread is not current_thread():
+            thread.join(timeout=5)
         self.status = "disconnected"
         self.native_tools = {}
 

@@ -353,6 +353,23 @@ def test_missing_optional_sdk_fails_without_hanging(monkeypatch):
     assert not conn._thread.is_alive()
 
 
+def test_disconnect_joins_worker_after_loop_closed():
+    class ThreadStub:
+        joined = False
+
+        def is_alive(self):
+            return not self.joined
+
+        def join(self, timeout=None):
+            self.joined = True
+
+    conn = MCPConnection('closed', '', {}, 2, 2, 20000)
+    conn._thread = ThreadStub()
+    conn._loop = SimpleNamespace(is_running=lambda: False)
+    conn.disconnect()
+    assert conn._thread.joined
+
+
 @pytest.mark.parametrize('server_count', [1, 2])
 def test_protocol_helpers_do_not_displace_existing_tools_at_cap(server_count):
     from agent.mcp.manager import MCPManager
