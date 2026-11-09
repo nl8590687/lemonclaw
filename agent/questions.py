@@ -68,7 +68,11 @@ def validate_answers(spec, fields):
                 raise ValueError(f'第 {i} 题选项序号无效')
             selected = [question['options'][int(v)-1] for v in values]
         answers.append({'question': question['prompt'], 'values': selected})
-    return {'status': 'confirmed', 'action': 'continue', 'answers': answers}
+    result = {'status': 'confirmed', 'action': 'continue', 'answers': answers}
+    if '_mcp_requests' in spec:
+        from agent.mcp.elicitation import validate_mcp_answers
+        validate_mcp_answers(spec, result)
+    return result
 
 
 def parse_terminal(spec, text):

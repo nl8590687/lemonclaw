@@ -19,7 +19,7 @@ LemonClaw is an open-source, general-purpose AI agent framework that turns any L
 - 🛠️ **16+ built-in tools** — file editing, grep/glob, git, web fetch, web search, email, HTTP, shell, cron, memory, and more.
 - 🧠 **Persistent memory** — TF-IDF retrieval over long-term memory chunks plus automatic session archival, so context survives across sessions.
 - 🧩 **Skills** — on-demand skill packages (`SKILL.md`) with hot-reload, LRU active-set injection, sensitive-param gating, and optional script execution.
-- 🔌 **MCP integration** - connect external MCP servers over Streamable HTTP; each remote tool becomes a first-class agent tool (`mcp__<server>__<tool>`), declared in `.lemonclaw/mcp.json` and hot-reloadable without losing the conversation.
+- 🔌 **MCP integration** - connect external MCP servers over Streamable HTTP, SSE, or stdio; each remote tool becomes a first-class agent tool (`mcp__<server>__<tool>`), declared in `.lemonclaw/mcp.json` and hot-reloadable without losing the conversation.
 - 🔀 **Multi-Agent Workflow** — build and run LangGraph-based multi-agent workflows with declarative JSON specs; sub-agents, human-in-the-loop (HITL), dynamic routing, and cross-restart resumption via persistent checkpointing.
 - 🔌 **OpenAI-compatible** — works with any OpenAI-compatible API (DeepSeek, OpenAI, local servers, …).
 - ⏰ **Built-in scheduling** — create and manage cron tasks at runtime; the agent can schedule its own follow-ups.
@@ -47,7 +47,7 @@ flowchart LR
     Agent --> Tools[Tools<br/>16+ built-in]
     Agent --> Mem[Memory<br/>TF-IDF + Archive]
     Agent --> Skills[Skills<br/>load/unload + inject]
-    Agent --> MCP[MCP<br/>streamable HTTP]
+    Agent --> MCP[MCP<br/>HTTP / SSE / stdio]
     Agent --> Out[Output Channel]
     Cmd --> Out
     Out --> Resp[Terminal / Feishu]
@@ -59,7 +59,7 @@ flowchart LR
 |- .lemonclaw/    LemonClaw core config storage
 |--- .env         Environment variables
 |--- .env.example Example env file
-|--- mcp.json     MCP server config (Streamable HTTP; gitignored - contains secrets)
+|--- mcp.json     MCP server config (HTTP / SSE / stdio; gitignored - contains secrets)
 |--- lemonclaw.db Global SQLite3 database (single DB for the whole project)
 |- agent/         Agent implementation (loop, tools, LLM, memory, skills, MCP)
 |- channels/      Input/output devices and the message bus
@@ -231,7 +231,7 @@ LemonClaw receives events through pluggable input channels and broadcasts replie
 | `memory` | Read / write persistent memory | optional (needs `ENABLE_MEMORY=true`) |
 | `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
 | `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |
-| `mcp__<server>__<tool>` | Tools from connected MCP servers (Streamable HTTP) | optional (needs `ENABLE_MCP=true` + `.lemonclaw/mcp.json`) |
+| `mcp__<server>__<tool>` | Tools from connected MCP servers (HTTP / SSE / stdio) | optional (needs `ENABLE_MCP=true` + `.lemonclaw/mcp.json`) |
 | `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | Define, run, resume, manage multi-agent workflows | optional (needs `ENABLE_WORKFLOW=true`) |
 
 > Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
@@ -305,7 +305,7 @@ If a skill ships a `requirements.txt` / `package.json`, install its deps once wi
 
 ## 🔌 MCP Integration
 
-When `ENABLE_MCP=true` (default), LemonClaw acts as an **MCP client** over **Streamable HTTP** (stdio is not supported). Each tool exposed by a connected MCP server is registered as a first-class agent tool named `mcp__<server_id>__<tool>`, so the LLM can call it directly with full parameter schemas.
+When `ENABLE_MCP=true` (default), LemonClaw uses the official **`langchain[mcp]`** integration and its FastMCP/MCP SDK client over **Streamable HTTP**, legacy **SSE**, or **stdio**. Install the updated requirements (including the `mcp` extra); upgrading plain `langchain` alone is insufficient. Each tool exposed by a connected MCP server is registered as a first-class agent tool named `mcp__<server_id>__<tool>`, so the LLM can call it directly with full parameter schemas.
 
 > LemonClaw is MCP **client only** (it consumes external tools); it does not expose itself as an MCP server.
 
@@ -328,7 +328,10 @@ Servers are declared in `.lemonclaw/mcp.json` - a JSON object keyed by `server_i
 }
 ```
 
-- `url` - the MCP Streamable HTTP endpoint.
+- `url` - the MCP endpoint; existing URL/header configurations continue to work.
+- `transport` - `http` (default), `sse`, or `stdio`. For stdio, set `command`, `args`, optional `env` and `cwd` instead of `url`. Local processes run with the LemonClaw OS user's permissions; configure them explicitly in the file.
+- `auth` - optional FastMCP authentication (`"oauth"` or a bearer token); HTTP headers remain supported. OAuth requires an accessible authorization/callback flow; a headless deployment does not automatically provide a login UI.
+- `roots` - optional list of roots supplied to the official client (legacy root-list requests). Roots describe scope to the server; they are not a filesystem sandbox.
 - `headers` - extra request headers. **Auth secrets go directly here** (see security below).
 - `auto_connect` - whether to connect on startup (default `true`).
 - `enabled` is **not** in the file - it's a DB management state toggled by `/mcp enable|disable`.
@@ -341,10 +344,14 @@ A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, saf
 
 ### How it works
 
-- **Discovery** - on startup and `/mcp reload`, each enabled server is connected: `initialize` handshake -> `Mcp-Session-Id` -> `notifications/initialized` -> `tools/list`. Each remote tool becomes an `mcp__<id>__<tool>` agent tool.
-- **Calling** - the LLM calls the tool; `MCPConnection` issues `tools/call` (parsing both `application/json` and `text/event-stream` responses), then formats and truncates the result.
+- **Discovery** - the official client negotiates the protocol era and handles discovery/pagination, JSON/SSE responses, session headers and cancellation. The official LangChain adapter supplies full JSON schemas and tool metadata. Each remote tool keeps its `mcp__<id>__<tool>` registration.
+- **Calling** - one persistent adapter/client context per server preserves application sessions across tool calls. Synchronous and asynchronous agent tools share a dedicated event loop. Server errors retain `ToolMessage.status="error"`; explicit `null` and nested arguments pass through unchanged. Successful calls retain access statistics.
+- **Content** - text, images, audio, embedded resources and resource links use standard LangChain content blocks. Structured content remains in the tool artifact. MCP images are stored as scoped attachment references in checkpoints and expanded only for vision-enabled model requests. Whether a model accepts audio or files depends on the selected model/provider; no transcription is implied.
+- **Resources/prompts** - servers advertising resources, prompts or completion gain an additional `mcp__<id>__protocol` tool when tool limits leave capacity to list/read resources, list/get prompts, complete arguments, and ping. Retrieved prompts are tool data; they do not replace the system prompt.
+- **Human input** - modern `InputRequiredResult` form/URL elicitations enter the existing durable terminal/Feishu question flow. JSON form answers are validated before acceptance; cancellation/timeout resumes with `cancel`. Existing question limits apply (up to 8 questions, 1000 characters per text answer). Legacy server-initiated elicitation is not supported by the upstream interrupt adapter. Modern tools may be re-issued on graph resume: servers must ask for input before performing irreversible work.
+- **Boundaries** - this is not a claim that every optional MCP extension is enabled. Remote LLM sampling, modern roots input rounds, resource subscriptions and task-extension administration are not exposed as agent capabilities. They need explicit handlers and lifecycle/policy integration. Unsupported requests fail explicitly; they are never silently approved.
 - **Hot reload** - `/mcp reload` (or `add`/`remove`/`enable`/`disable`/`reconnect`) re-reads `mcp.json`, reconnects, and **rebuilds the agent while preserving the checkpointer** - the current conversation continues uninterrupted.
-- **Limits** - per-server `MCP_MAX_TOOLS` (default 100) and a global hard cap of 200 registered MCP tools; results truncated to `MCP_RESULT_MAX_CHARS` (default 20000).
+- **Limits** - per-server `MCP_MAX_TOOLS` (default 100) and a global hard cap of 200 registered MCP tools; model-visible text truncated to `MCP_RESULT_MAX_CHARS` (default 20000); binary blocks and structured artifacts are not string-truncated. Image request limits follow the existing vision limits. A call timeout cancels the SDK request without automatically retrying a possibly completed remote operation.
 - **Resilience** - one unreachable server doesn't affect others or built-in tools; `ENABLE_MCP=false` or init failure degrades to "no MCP tools" without blocking the agent.
 
 ### Manage at runtime
@@ -458,6 +465,6 @@ Feishu uses native Card 2.0 dropdowns, text inputs, and a form with confirm/canc
 
 Use `/question` in the original channel to resend the question without resetting its deadline, `/cancel` to cancel, or `/clear` to clear the session and invalidate old questions. Waiting state and deadlines survive restart; offline time counts toward the timeout. The main loop checks results and deadlines once per second while idle, or at its next scheduling opportunity after other work. Feishu Typing stays on the original request while waiting and becomes DONE on completion, cancellation, or timeout. Question display is restricted to its channel; ordinary output routing is unchanged.
 
-This only resumes explicit question interrupts, not arbitrary interrupted tools. Tests use local fake providers and SDK callbacks; real tenant rendering and callback configuration require manual verification.
+An interrupted turn is resumed from its persisted checkpoint on the next input. A continuation command such as `继续` only resumes the pending turn; other input is processed after recovery. An interrupted tool may run again when the graph is replayed, so externally visible writes should be idempotent. Tests use local fake providers and SDK callbacks; real tenant rendering and callback configuration require manual verification.
 
 A human-confirmation interrupt is control flow, not a tool error. The original tool call remains pending while waiting. The internal wake-up only invokes `Command(resume=...)`, without adding a new user message. Confirmation, cancellation, and timeout complete the original tool-call ID; actual tool failures are still reported.

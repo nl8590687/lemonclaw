@@ -171,13 +171,10 @@ def test_sigkill_recovery(database, tmp_path, in_tool, keep_tools):
     service = make_service(tools=[side_effect] if keep_tools else [])
     try:
         if in_tool:
-            before = service.checkpointer.get_tuple({'configurable': {'thread_id': 'session:crash'}})
-            assert service.run('继续', {}, session_key='crash') is None
-            service.default_out_chan.write_system_error.assert_called_once()
-            service.trim_msg_history()
-            assert service.checkpointer.get_tuple(service._thread_config()) == before
-            assert marker.read_text() == 'executed'
-            service.reset_session()
+            result = service.run('继续', {}, session_key='crash')
+            assert result is not None
+            service.default_out_chan.write_system_error.assert_not_called()
+            assert marker.read_text() == ('repeated' if keep_tools else 'executed')
             assert service.run('重新开始', {}, session_key='crash') is not None
         else:
             result = service.run('重启后的消息', {}, session_key='crash')
@@ -186,7 +183,7 @@ def test_sigkill_recovery(database, tmp_path, in_tool, keep_tools):
         service.close()
 
 
-def test_failed_model_turn_is_not_automatically_replayed(database):
+def test_failed_model_turn_auto_resumes_and_processes_new_input(database):
     class FailingModel(FakeModel):
         def _generate(self, *args, **kwargs):
             raise RuntimeError('模拟模型进程中断')
@@ -197,12 +194,65 @@ def test_failed_model_turn_is_not_automatically_replayed(database):
     with pytest.raises(RuntimeError, match='模拟模型进程中断'):
         service.run('未完成的请求', {}, session_key='failed')
     service.close()
-    restarted = make_service()
+    restarted = make_service([AIMessage(content='自动恢复完成'), AIMessage(content='新请求已处理')])
     try:
-        assert restarted.run('新请求', {}, session_key='failed') is None
-        restarted.default_out_chan.write_system_error.assert_called_once()
-        restarted.reset_session()
-        assert restarted.run('新请求', {}, session_key='failed') is not None
+        result = restarted.run('新请求', {}, session_key='failed')
+        assert [m.content for m in result['messages']] == [
+            '未完成的请求', '自动恢复完成', '新请求', '新请求已处理']
+        assert not restarted._has_interrupted_turn()
+        restarted.default_out_chan.write_system_error.assert_not_called()
+        assert [call.args[0] for call in restarted.default_out_chan.write_message.call_args_list] == [
+            '自动恢复完成', '新请求已处理']
+    finally:
+        restarted.close()
+
+
+def test_continue_trigger_only_resumes_pending_turn(database):
+    class FailingModel(FakeModel):
+        def _generate(self, *args, **kwargs):
+            raise RuntimeError('模拟模型进程中断')
+
+    service = make_service()
+    from agent.agent import _create_agent
+    service.agent = _create_agent(FailingModel(responses=[AIMessage(content='')]), [], '测试', service.checkpointer)
+    with pytest.raises(RuntimeError, match='模拟模型进程中断'):
+        service.run('未完成的请求', {}, session_key='continue')
+    service.close()
+    restarted = make_service([AIMessage(content='自动恢复完成')])
+    try:
+        result = restarted.run('继续', {}, session_key='continue')
+        assert [m.content for m in result['messages']] == ['未完成的请求', '自动恢复完成']
+        assert [call.args[0] for call in restarted.default_out_chan.write_message.call_args_list] == ['自动恢复完成']
+    finally:
+        restarted.close()
+
+
+def test_interrupted_tool_turn_auto_resumes(database):
+    calls = []
+
+    @tool
+    def side_effect() -> str:
+        """首次执行模拟工具中断，第二次正常返回。"""
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError('工具执行中断')
+        return '工具已完成'
+
+    service = make_service([AIMessage(content='', tool_calls=[{
+        'name': 'side_effect', 'args': {}, 'id': 'retry-call', 'type': 'tool_call',
+    }])], [side_effect])
+    with pytest.raises(RuntimeError, match='工具执行中断'):
+        service.run('执行工具', {}, session_key='tool-resume')
+    service.close()
+    restarted = make_service([AIMessage(content='恢复后完成')], [side_effect])
+    try:
+        result = restarted.run('继续', {}, session_key='tool-resume')
+        assert result is not None
+        assert calls == [1, 1]
+        assert not restarted._has_interrupted_turn()
+        restarted.default_out_chan.write_system_error.assert_not_called()
+        assert [m.content for m in result['messages']] == [
+            '执行工具', '', '工具已完成', '恢复后完成']
     finally:
         restarted.close()
 

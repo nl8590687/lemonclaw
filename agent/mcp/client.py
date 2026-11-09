@@ -12,276 +12,290 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Official LangChain/FastMCP client behind the synchronous business facade.
+
+A connection owns one event loop and one long-lived adapter context. All MCP
+operations stay on that loop; browser/SSH sessions survive between tool calls.
+The owner task also closes the context (AnyIO task groups require this).
 """
-MCP Streamable HTTP 同步传输客户端
-
-``MCPConnection`` 封装单个 MCP 服务端的连接生命周期：
-initialize 握手 -> 捕获 ``Mcp-Session-Id`` -> notifications/initialized ->
-tools/list 发现 -> tools/call 调用 -> DELETE 终止。全程同步（``httpx.Client``）。
-
-响应按 ``Content-Type`` 分流：``application/json`` 直解析；
-``text/event-stream`` 按 SSE 规范逐行解析，按 JSON-RPC ``id`` 匹配本次请求的响应。
-"""
-
-import json
-import logging
+import asyncio
+import atexit
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
+import logging
+from threading import Thread, current_thread
 from typing import Any
 
-import httpx
+from langchain_core.messages import ToolMessage
 
 logger = logging.getLogger(__name__)
-
-# 协议版本（MCP Streamable HTTP，2025-03-26）
-_PROTOCOL_VERSION = "2025-03-26"
-_CLIENT_VERSION = "1.0.0"
-_CLIENT_NAME = "lemonclaw"
 
 
 @dataclass
 class ToolInfo:
-    """远程工具元信息（来自 tools/list）"""
-    name: str                                # 远程工具名
+    name: str
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
 
 
-def _extract_text(content: list[dict]) -> str:
-    """从 content 块列表中拼接 text 类型内容。"""
-    parts = []
-    for blk in content or []:
-        if isinstance(blk, dict) and blk.get("type") == "text":
-            parts.append(blk.get("text", ""))
-    return "\n".join(parts)
+def truncate_text(text: str, limit: int) -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    half = max(1, limit // 2)
+    return text[:half] + "\n… [MCP 结果已截断] …\n" + text[-half:]
 
 
 class MCPConnection:
-    """单个 MCP 服务端的 Streamable HTTP 同步连接（httpx.Client）。
+    """Own an official client, persistent session, and synchronous bridge."""
 
-    职责：initialize 握手 -> 捕获 Mcp-Session-Id -> notifications/initialized ->
-    tools/list 发现 -> tools/call 调用 -> DELETE 终止。全程同步。
-    """
-
-    def __init__(self, server_id: str, url: str, headers: dict[str, str],
-                 connect_timeout: int, call_timeout: int, result_max_chars: int,
-                 transport: httpx.BaseTransport | None = None):
-        self.server_id = server_id
-        self.url = url
-        self.headers = headers or {}                  # 含认证密钥，原样发出，不经替换
-        self.connect_timeout = connect_timeout
-        self.call_timeout = call_timeout
+    def __init__(self, server_id, url, headers, connect_timeout, call_timeout,
+                 result_max_chars, *, options=None, target=None):
+        self.server_id, self.url, self.headers = server_id, url, headers or {}
+        self.connect_timeout, self.call_timeout = connect_timeout, call_timeout
         self.result_max_chars = result_max_chars
-        self.transport = transport                     # 测试注入（httpx.MockTransport）；生产为 None
-        self.client: httpx.Client | None = None
-        self.session_id: str | None = None            # Mcp-Session-Id
-        self.protocol_version: str = ""
-        self.server_info: dict[str, Any] = {}
-        self.tools: list[ToolInfo] = []               # 已发现工具
-        self.status: str = "disconnected"             # connecting/connected/error/disconnected
-        self.last_error: str | None = None
-        self._next_rpc_id = 1
+        self.options = options or {}
+        self._target = target  # in-process official server/client, for integration tests
+        self.tools = []
+        self.native_tools = {}
+        self.protocol_version, self.server_info, self.capabilities = "", {}, {}
+        self.status, self.last_error = "disconnected", None
+        self._loop = self._thread = self._stop = self.adapter = self._owner = None
+        self._ready = Future()
 
-    # ============ 连接 ============
+    def _transport(self):
+        from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
+        if self._target is not None:
+            return self._target
+        kind = self.options.get("transport", "stdio" if self.options.get("command") else "http")
+        if kind == "stdio":
+            return StdioTransport(command=self.options["command"], args=self.options.get("args", []),
+                                  env=self.options.get("env"), cwd=self.options.get("cwd"))
+        if kind not in {"http", "streamable_http", "streamable-http", "sse"}:
+            raise ValueError(f"不支持的 MCP transport: {kind}")
+        if kind == "sse":
+            return SSETransport(self.url, headers=self.headers, auth=self.options.get("auth"))
+        return StreamableHttpTransport(self.url, headers=self.headers, auth=self.options.get("auth"),
+                                       max_sse_event_size=32 * 1024 * 1024)
 
-    def connect(self) -> tuple[bool, str]:
-        """initialize + notifications/initialized + tools/list。
-
-        成功 -> (True, "")；失败 -> (False, err_msg)，status=error。
-        """
-        self.status = "connecting"
-        self.last_error = None
+    async def _serve(self):
+        self._stop = asyncio.Event()
         try:
-            self.client = httpx.Client(timeout=self.connect_timeout, transport=self.transport)
-            # 1. initialize
-            resp = self._post_request({
-                "jsonrpc": "2.0", "id": self._alloc_id(), "method": "initialize",
-                "params": {
-                    "protocolVersion": _PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": _CLIENT_NAME, "version": _CLIENT_VERSION},
-                },
-            }, timeout=self.connect_timeout)
-            result = resp.get("result", {}) or {}
-            self.protocol_version = result.get("protocolVersion", "") or ""
-            self.server_info = result.get("serverInfo", {}) or {}
-            # 2. notifications/initialized（无 id，无响应）
-            self._post_notification({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            # 3. tools/list
-            resp2 = self._post_request({
-                "jsonrpc": "2.0", "id": self._alloc_id(), "method": "tools/list", "params": {},
-            }, timeout=self.connect_timeout)
-            tools = (resp2.get("result", {}) or {}).get("tools", []) or []
-            self.tools = [
-                ToolInfo(
-                    name=t.get("name", ""),
-                    description=t.get("description", ""),
-                    input_schema=t.get("inputSchema", {}) or {},
-                )
-                for t in tools if isinstance(t, dict) and t.get("name")
-            ]
-            self.status = "connected"
-            logger.info(f"MCP 服务 {self.server_id} 已连接：协议 {self.protocol_version}，"
-                        f"发现 {len(self.tools)} 个工具")
+            from fastmcp import Client
+            from langchain.mcp import MCPAdapter
+            target = self._transport()
+            if not isinstance(target, Client):
+                target = Client(target, name="lemonclaw", timeout=self.call_timeout,
+                                init_timeout=self.connect_timeout, roots=self.options.get("roots"))
+            self.adapter = MCPAdapter(target)
+            async with self.adapter:
+                client = self.adapter.client
+                self.protocol_version = str(client.protocol_version or "")
+                self.server_info = client.server_info.model_dump(exclude_none=True) if client.server_info else {}
+                caps = client.server_capabilities
+                self.capabilities = caps.model_dump(exclude_none=True) if caps else {}
+                await self._refresh_tools()
+                self.status = "connected"
+                self._ready.set_result(None)
+                await self._stop.wait()
+        except BaseException as exc:
+            if not self._ready.done():
+                self._ready.set_exception(exc)
+            elif not isinstance(exc, asyncio.CancelledError):
+                self.status, self.last_error = "error", self._error(exc)
+                logger.warning("MCP %s connection stopped: %s", self.server_id, self.last_error)
+        finally:
+            self.adapter = None
+
+    def _worker(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._owner = self._loop.create_task(self._serve())
+            self._loop.run_until_complete(self._owner)
+        finally:
+            tasks = asyncio.all_tasks(self._loop)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                self._loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            self._loop.close()
+
+    def connect(self):
+        if self._thread and self._thread.is_alive():
+            self.disconnect()
+        self.status, self.last_error = "connecting", None
+        self._ready = Future()
+        self._thread = Thread(target=self._worker, name=f"mcp-{self.server_id}", daemon=True)
+        self._thread.start()
+        try:
+            self._ready.result(timeout=self.connect_timeout)
+            atexit.register(self.disconnect)
             return True, ""
-        except Exception as e:
+        except Exception as exc:
+            self.last_error = self._error(exc)
+            self.disconnect()
             self.status = "error"
-            self.last_error = str(e)
-            logger.warning(f"MCP 服务 {self.server_id} 连接失败: {e}")
-            if self.client is not None:
-                try:
-                    self.client.close()
-                except Exception:
-                    pass
-                self.client = None
-            return False, str(e)
+            return False, self.last_error
 
-    def disconnect(self) -> None:
-        """有 session_id 则 DELETE 终止，关闭 client；status=disconnected。"""
-        if self.client is None:
-            self.status = "disconnected"
-            return
-        if self.session_id:
-            try:
-                self.client.delete(
-                    self.url,
-                    headers=self._request_headers(),
-                    timeout=self.connect_timeout,
-                )
-            except Exception as e:
-                logger.debug(f"MCP 服务 {self.server_id} DELETE 终止失败（忽略）: {e}")
-        try:
-            self.client.close()
-        except Exception:
-            pass
-        self.client = None
-        self.session_id = None
+    def disconnect(self):
+        atexit.unregister(self.disconnect)
+        thread, loop = self._thread, self._loop
+        if thread and thread.is_alive() and loop and loop.is_running():
+            if self._stop:
+                loop.call_soon_threadsafe(self._stop.set)
+            thread.join(timeout=self.connect_timeout)
+            if thread.is_alive() and loop.is_running() and self._owner is not None:
+                loop.call_soon_threadsafe(self._owner.cancel)
+                thread.join(timeout=5)
+        # The worker may already have closed its loop while the thread is still
+        # finishing teardown. Wait for it before reporting disconnect/failure.
+        if thread and thread.is_alive() and thread is not current_thread():
+            thread.join(timeout=5)
         self.status = "disconnected"
+        self.native_tools = {}
 
-    # ============ 调用 ============
-
-    def call_tool(self, name: str, arguments: dict) -> str:
-        """tools/call，格式化结果（截断、isError 处理）；失败返回 ❌ 字符串。"""
-        if self.status != "connected" or self.client is None:
-            return f"❌ MCP 服务 {self.server_id} 未连接，请执行 /mcp reconnect {self.server_id}"
+    def _submit(self, coroutine, timeout=None):
+        if not self._loop or not self._loop.is_running() or not self.adapter:
+            coroutine.close()
+            raise RuntimeError(f"MCP 服务 {self.server_id} 未连接")
+        # run_coroutine_threadsafe carries the caller's contextvars, including
+        # LangGraph's interrupt/resume context and per-turn provenance.
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
-            resp = self._post_request({
-                "jsonrpc": "2.0", "id": self._alloc_id(), "method": "tools/call",
-                "params": {"name": name, "arguments": arguments or {}},
-            }, timeout=self.call_timeout)
-            err = resp.get("error")
-            if err:
-                return f"❌ MCP 工具 {name} 返回错误: {err.get('message', str(err))}"
-            result = resp.get("result", {}) or {}
-            return self._format_result(result, name)
-        except httpx.TimeoutException:
-            return f"❌ MCP 工具调用超时（{self.call_timeout}s）：{name}"
-        except Exception as e:
-            self.last_error = str(e)
-            return f"❌ MCP 工具调用失败: {e}"
+            return future.result(timeout=timeout or self.call_timeout)
+        except FutureTimeout:
+            future.cancel()  # propagate cancellation to the official client/server
+            raise TimeoutError(f"MCP 调用超过 {timeout or self.call_timeout} 秒；远端操作是否完成需核实") from None
 
-    def list_tools(self) -> list[ToolInfo]:
-        """返回已缓存工具列表（连接时发现，不重复请求）。"""
+    async def _refresh_tools(self):
+        native = await self.adapter.list_tools(cache_mode="refresh")
+        self.native_tools = {tool.name: tool for tool in native}
+        self.tools = [ToolInfo(tool.name, tool.description, tool.args_schema) for tool in native]
+
+    def list_tools(self):
         return self.tools
 
-    # ============ 内部 ============
+    async def _call(self, tool_name, arguments):
+        """Use SDK results directly, including content the LC converter lacks.
 
-    def _alloc_id(self) -> int:
-        rid = self._next_rpc_id
-        self._next_rpc_id += 1
-        return rid
+        The SDK owns negotiation, transports, pagination and typed requests.
+        Modern human input is surfaced to the existing durable question flow;
+        no sampling/model invocation is silently authorized by a remote server.
+        """
+        from mcp.types import InputRequiredResult, ElicitRequest, ElicitRequestFormParams, ElicitResult
+        from mcp.types.version import LATEST_MODERN_VERSION, is_version_at_least
+        from langgraph.types import interrupt
+        client = self.adapter.client
+        if not is_version_at_least(client.protocol_version, LATEST_MODERN_VERSION):
+            return await client.call_tool(tool_name, arguments, raise_on_error=False)
+        result = await client.session.call_tool(tool_name, arguments, allow_input_required=True)
+        for _ in range(10):
+            if not isinstance(result, InputRequiredResult):
+                return result
+            requests = result.input_requests or {}
+            if any(not isinstance(request, ElicitRequest) for request in requests.values()):
+                raise NotImplementedError('MCP 服务请求 sampling/roots 输入；尚未配置相应处理策略，未自动授权')
+            responses = {}
+            if requests:
+                described = []
+                for key, request in requests.items():
+                    params = request.params
+                    if isinstance(params, ElicitRequestFormParams):
+                        described.append({'key': key, 'mode': 'form', 'message': params.message,
+                                          'requested_schema': params.requested_schema})
+                    else:
+                        described.append({'key': key, 'mode': 'url', 'message': params.message, 'url': str(params.url)})
+                answer = interrupt({'type': 'mcp_elicitation', 'tool_name': tool_name, 'requests': described})
+                for key in requests:
+                    value = answer['responses'][key]
+                    responses[key] = ElicitResult(**value)
+            result = await client.session.call_tool(tool_name, arguments, input_responses=responses,
+                request_state=result.request_state, allow_input_required=True)
+        raise RuntimeError('MCP 工具超过 10 轮输入/继续执行限制；未自动重试')
 
-    def _request_headers(self) -> dict[str, str]:
-        """组装请求头：self.headers（含密钥，原样）+ 协议约定头。headers 不经任何替换。"""
-        h = dict(self.headers or {})
-        h["Content-Type"] = "application/json"
-        h["Accept"] = "application/json, text/event-stream"
-        if self.session_id:
-            h["Mcp-Session-Id"] = self.session_id
-        return h
-
-    def _post_request(self, payload: dict, timeout: int | None = None) -> dict:
-        """发送 JSON-RPC 请求（有 id），回传 session_id 头，按 Content-Type 解析（JSON 或 SSE），
-        按 id 匹配返回响应 dict（含 result/error）。"""
-        if self.client is None:
-            raise RuntimeError("httpx.Client 未初始化")
-        to = timeout if timeout is not None else self.call_timeout
-        with self.client.stream(
-            "POST", self.url, headers=self._request_headers(), json=payload, timeout=to,
-        ) as resp:
-            sid = resp.headers.get("mcp-session-id")
-            if sid:
-                self.session_id = sid
-            if resp.status_code >= 400:
-                body = resp.read().decode("utf-8", errors="replace")[:500]
-                raise RuntimeError(f"HTTP {resp.status_code}: {body}")
-            return self._parse_response(resp, payload.get("id"))
-
-    def _post_notification(self, payload: dict, timeout: int | None = None) -> None:
-        """发送 JSON-RPC 通知（无 id，无响应）。服务端通常回 202，忽略响应体。"""
-        if self.client is None:
-            return
-        to = timeout if timeout is not None else self.connect_timeout
-        try:
-            resp = self.client.post(
-                self.url, headers=self._request_headers(), json=payload, timeout=to,
-            )
-            if resp.status_code >= 400:
-                logger.debug(f"MCP 服务 {self.server_id} 通知 {payload.get('method')} "
-                             f"返回 {resp.status_code}（忽略）")
-        except Exception as e:
-            logger.debug(f"MCP 服务 {self.server_id} 通知 {payload.get('method')} 失败（忽略）: {e}")
-
-    def _parse_response(self, resp: httpx.Response, expected_id: int | None) -> dict:
-        """application/json -> resp.json()；text/event-stream -> SSE 逐行解析按 id 匹配。"""
-        ctype = resp.headers.get("content-type", "")
-        if "text/event-stream" in ctype:
-            data_lines: list[str] = []
-            for line in resp.iter_lines():
-                if line is None:
-                    continue
-                if line == "":
-                    # 空行结束一个 event
-                    if data_lines:
-                        payload_str = "\n".join(data_lines)
-                        try:
-                            msg = json.loads(payload_str)
-                            if expected_id is not None and msg.get("id") == expected_id:
-                                return msg
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                        data_lines = []
-                    continue
-                if line.startswith("data:"):
-                    data_lines.append(line[len("data:"):].lstrip(" "))
-                # 忽略 event: / id: / retry: / 注释行
-            raise RuntimeError("SSE 流未返回匹配响应（id 未匹配）")
-        # JSON 响应
-        resp.read()
-        return resp.json()
-
-    def _format_result(self, result: dict, tool_name: str) -> str:
-        """格式化 tools/call 结果：isError / content 块 / 非 text 占位 / 截断。"""
-        if result.get("isError"):
-            text = _extract_text(result.get("content", []))
-            return f"❌ MCP 工具 {tool_name} 返回错误: {text}"
-        parts: list[str] = []
-        for blk in result.get("content", []) or []:
-            if not isinstance(blk, dict):
-                continue
-            t = blk.get("type")
-            if t == "text":
-                parts.append(blk.get("text", ""))
-            elif t == "image":
-                parts.append(f"[image: {blk.get('mimeType', '?')}]")
-            elif t == "audio":
-                parts.append(f"[audio: {blk.get('mimeType', '?')}]")
-            elif t == "resource":
-                res = blk.get("resource", {}) or {}
-                parts.append(f"[resource: {res.get('uri', '?')}]")
+    @staticmethod
+    def _message(result, tool_name, tool_call_id):
+        from langchain_core.messages.content import create_text_block, create_image_block, create_audio_block, create_file_block
+        from mcp.types import TextContent, ImageContent, AudioContent, EmbeddedResource, ResourceLink
+        blocks = []
+        for block in result.content:
+            if isinstance(block, TextContent):
+                blocks.append(create_text_block(text=block.text))
+            elif isinstance(block, ImageContent):
+                blocks.append(create_image_block(base64=block.data, mime_type=block.mime_type))
+            elif isinstance(block, AudioContent):
+                blocks.append(create_audio_block(base64=block.data, mime_type=block.mime_type))
+            elif isinstance(block, EmbeddedResource):
+                resource = block.resource
+                if hasattr(resource, 'text'):
+                    blocks.append(create_text_block(text=resource.text))
+                else:
+                    factory = create_image_block if (resource.mime_type or '').startswith('image/') else create_file_block
+                    blocks.append(factory(base64=resource.blob, mime_type=resource.mime_type))
+            elif isinstance(block, ResourceLink):
+                factory = create_image_block if (block.mime_type or '').startswith('image/') else create_file_block
+                blocks.append(factory(url=str(block.uri), mime_type=block.mime_type))
             else:
-                parts.append(f"[{t}]")
-        text = "\n".join(p for p in parts if p)
-        if len(text) > self.result_max_chars:
-            half = self.result_max_chars // 2
-            text = text[:half] + "\n\n[... MCP 结果较长，已截断 ...]\n\n" + text[-half:]
-        return text
+                raise ValueError(f'尚不支持的 MCP 内容类型: {type(block).__name__}')
+        structured = getattr(result, 'structured_content', None)
+        if not blocks and structured is not None:
+            import json
+            blocks.append(create_text_block(text=json.dumps(structured, ensure_ascii=False)))
+        artifact = {'structured_content': structured} if structured is not None else None
+        return ToolMessage(content=blocks or [create_text_block(text='[MCP 返回空内容]')],
+            name=tool_name, tool_call_id=tool_call_id, artifact=artifact,
+            status='error' if result.is_error else 'success')
+
+    def invoke_tool(self, tool_name, arguments, tool_call_id="mcp-call", config=None):
+        async def invoke():
+            if tool_name not in self.native_tools:
+                raise ValueError(f"MCP 工具不存在: {tool_name}")
+            result = await self._call(tool_name, arguments or {})
+            return self._message(result, tool_name, tool_call_id)
+        return self._submit(invoke())
+
+    def call_tool(self, tool_name, arguments):
+        """CLI compatibility: render content without ever printing binary payloads."""
+        try:
+            message = self.invoke_tool(tool_name, arguments)
+            text = truncate_text(self.render(message.content), self.result_max_chars)
+            return ("❌ " if message.status == "error" else "") + text
+        except Exception as exc:
+            from langgraph.errors import GraphInterrupt
+            if isinstance(exc, GraphInterrupt):
+                raise
+            return f"❌ MCP 工具调用失败: {self._error(exc)}"
+
+    def protocol(self, operation, arguments=None):
+        """Advanced operations go through the same official, persistent client."""
+        async def invoke():
+            client = self.adapter.client
+            methods = {"list_resources", "list_resource_templates", "read_resource", "list_prompts",
+                       "get_prompt", "complete", "ping"}
+            if operation not in methods:
+                raise ValueError(f"不支持的 MCP 操作: {operation}")
+            args = dict(arguments or {})
+            if operation == "complete":
+                from mcp.types import PromptReference, ResourceTemplateReference
+                ref = args.get("ref", {})
+                args["ref"] = (PromptReference if ref.get("type") == "ref/prompt" else ResourceTemplateReference)(**ref)
+            return await getattr(client, operation)(**args)
+        return self._submit(invoke())
+
+    def _error(self, exc):
+        # Connection libraries may include a URL/header in exceptions. Do not
+        # expose configured credentials through CLI, tools, logs, or the DB.
+        text = str(exc) or type(exc).__name__
+        for secret in [*self.headers.values(), *(self.options.get("env") or {}).values(), self.options.get("auth")]:
+            if isinstance(secret, str) and secret:
+                text = text.replace(secret, "[redacted]")
+        return truncate_text(text, 2000)
+
+    @staticmethod
+    def render(content):
+        if isinstance(content, str):
+            return content
+        return "\n".join(block.get("text", "") if block.get("type") == "text"
+                         else f"[{block.get('type', 'content')}: {block.get('mime_type', '')}]"
+                         for block in content if isinstance(block, dict))
