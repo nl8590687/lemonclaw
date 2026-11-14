@@ -243,6 +243,13 @@ class FeishuMessageSender:
         """发送 Markdown 格式（转为飞书 Post 富文本）"""
         return self._send(open_id, "post", md_to_lark_post(md_text))
 
+    def send_markdown_card(self, open_id: str, md_text: str, event_type: object = None) -> bool:
+        """最终输出使用 Card 2.0；分段失败即停止，不重复发送已交付部分。"""
+        for card in markdown_reply_cards(md_text, event_type):
+            if not self._send(open_id, "interactive", json.dumps(card, ensure_ascii=False)):
+                return False
+        return True
+
     def send_post(self, open_id: str, post_content: dict[str, Any]) -> bool:
         """发送原生 Post 富文本（内容由调用方组装）"""
         return self._send(open_id, "post", json.dumps(post_content, ensure_ascii=False))
@@ -1097,3 +1104,66 @@ def question_closed_card(row):
     return {'schema': '2.0', 'config': {'update_multi': True, 'enable_forward': False},
             'header': {'template': 'grey', 'title': {'tag': 'plain_text', 'content': '用户确认状态'}},
             'body': {'elements': elements}}
+
+
+# 为 30 KB 消息限制预留接收人、UUID 等信封字段空间；按转义后的 UTF-8 字节计量。
+_REPLY_CARD_BYTES = 24_000
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def markdown_reply_cards(text: str, event_type: object = None):
+    """构造只展示内容的卡片，超长时按顺序分段并保持跨段代码围栏闭合。"""
+    from channels.bus.enum import EventType
+    if isinstance(event_type, EventType):
+        event_type = event_type.value
+    label = event_type.strip() if isinstance(event_type, str) and event_type.strip() else '未知'
+    # 类型使用 plain_text，避免外部上下文在卡片标题中注入 Markdown/人员提及。
+    label = label[:128]
+
+    def card(content, part):
+        title = f'事件类型：{label}' + (f' · 续篇 {part}' if part > 1 else '')
+        return {'schema': '2.0', 'header': {'title': {'tag': 'plain_text', 'content': title}},
+                'body': {'elements': [{'tag': 'markdown', 'content': content}]}}
+
+    def size(content, part):
+        payload = json.dumps(card(content, part), ensure_ascii=False)
+        return len(json.dumps({'content': payload}, ensure_ascii=False).encode('utf-8'))
+
+    def fence_after(chunk, state):
+        for line in chunk.splitlines():
+            match = _FENCE.match(line)
+            if not match:
+                continue
+            token, rest = match.groups()
+            if state is None:
+                state = (token, line)
+            elif token[0] == state[0][0] and len(token) >= len(state[0]) and not rest.strip():
+                state = None
+        return state
+
+    offset, part, state = 0, 1, None
+    while offset < len(text):
+        prefix = state[1] + '\n' if state else ''
+        # 留出闭合围栏的空间；不会截断 Unicode 字符或丢弃原始正文。
+        low, high = 0, min(len(text) - offset, _REPLY_CARD_BYTES)
+        while low < high:
+            mid = (low + high + 1) // 2
+            chunk = text[offset:offset + mid]
+            after = fence_after(chunk, state)
+            suffix = '\n' + after[0] if after else ''
+            if size(prefix + chunk + suffix, part) <= _REPLY_CARD_BYTES:
+                low = mid
+            else:
+                high = mid - 1
+        if not low:
+            raise ValueError('飞书卡片内容无法在消息大小限制内分段')
+        end = offset + low
+        if end < len(text):
+            newline = text.rfind('\n', offset, end)
+            if newline >= offset + low // 2:
+                end = newline + 1
+        chunk = text[offset:end]
+        after = fence_after(chunk, state)
+        suffix = '\n' + after[0] if after else ''
+        yield card(prefix + chunk + suffix, part)
+        offset, state, part = end, after, part + 1
