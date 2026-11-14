@@ -352,6 +352,36 @@ class FeishuMessageSender:
         return bytes(data), response.file_name, None
 
 
+def bash_cli_environment(environment: dict[str, str]) -> dict[str, str]:
+    """为 Bash 子进程提供应用凭证；SDK 负责 tenant token 缓存及续期。"""
+    child_env = environment.copy()
+    # bridge 的 profile 已决定身份来源，不能用 LemonClaw 配置覆盖。
+    if child_env.get("LARK_CHANNEL"):
+        return child_env
+    config = get_global_config()
+    app_id = config.FEISHU_APP_ID or ""
+    app_secret = config.FEISHU_APP_SECRET.get_secret_value()
+    if not app_id or not app_secret:
+        return child_env
+    try:
+        from lark_oapi.core.token.manager import TokenManager
+
+        sender = FeishuMessageSender(app_id, app_secret)
+        token = TokenManager.get_self_tenant_token(sender.client.config)
+        if not token:
+            raise ValueError("empty token")
+    except Exception:
+        # SDK 异常可能携带服务端响应，不将其作为工具结果返回。
+        raise RuntimeError("飞书 CLI 应用身份初始化失败，请检查应用配置和网络") from None
+    child_env.update({
+        "LARKSUITE_CLI_APP_ID": app_id,
+        "LARKSUITE_CLI_APP_SECRET": app_secret,
+        "LARKSUITE_CLI_BRAND": "feishu",
+        "LARKSUITE_CLI_TENANT_ACCESS_TOKEN": token,
+    })
+    return child_env
+
+
 # =====================================================================
 # 文件/媒体接收与暂存
 # =====================================================================

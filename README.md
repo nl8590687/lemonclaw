@@ -471,3 +471,19 @@ Use `/question` in the original channel to resend the question without resetting
 An interrupted turn is resumed from its persisted checkpoint on the next input. A continuation command such as `继续` only resumes the pending turn; other input is processed after recovery. An interrupted tool may run again when the graph is replayed, so externally visible writes should be idempotent. Tests use local fake providers and SDK callbacks; real tenant rendering and callback configuration require manual verification.
 
 A human-confirmation interrupt is control flow, not a tool error. The original tool call remains pending while waiting. The internal wake-up only invokes `Command(resume=...)`, without adding a new user message. Confirmation, cancellation, and timeout complete the original tool-call ID; actual tool failures are still reported.
+
+### Feishu CLI in Bash
+
+The Docker image includes Node.js 24, npm, and `@larksuite/cli` 1.0.100
+(overridable with the `NODE_IMAGE` and `LARK_CLI_VERSION` build arguments).
+With `ENABLE_BASH_TOOL=true` and the existing `FEISHU_APP_ID` /
+`FEISHU_APP_SECRET` configured, Bash child processes receive the CLI app
+credentials, the `feishu` brand, and a short-lived tenant access token.
+The Feishu SDK caches and renews this token; each Bash invocation obtains the
+current value. Existing long-running commands need to be invoked again after
+their token expires. Credential initialization failures stop that Bash invocation.
+No credentials are stored in the image. Bash can read its environment, so only
+trusted tasks should have access. Plaintext CLI secrets are redacted from tool
+output, which does not prevent commands from reading or transforming them.
+User OAuth is outside this integration; app credentials do not grant user identity.
+An existing `LARK_CHANNEL` bridge binding is preserved without overriding its profile.

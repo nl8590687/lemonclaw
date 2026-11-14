@@ -44,7 +44,10 @@ class BashTool(BaseTool):
         """执行命令"""
         process = None
         try:
+            from channels.device.feishu import bash_cli_environment
+
             popen_kwargs = {
+                "env": bash_cli_environment(dict(os.environ)),
                 "text": True,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
@@ -74,7 +77,15 @@ class BashTool(BaseTool):
                 output.append("标准错误:\n" + stderr)
             output.append(f"退出代码: {process.returncode}")
 
-            return "\n\n".join(output)
+            result = "\n\n".join(output)
+            for name in (
+                "LARKSUITE_CLI_APP_SECRET", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN",
+                "LARKSUITE_CLI_USER_ACCESS_TOKEN",
+            ):
+                secret = popen_kwargs["env"].get(name)
+                if secret:
+                    result = result.replace(secret, "[REDACTED]")
+            return result
 
         except subprocess.TimeoutExpired:
             if process:
