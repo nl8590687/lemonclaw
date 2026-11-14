@@ -141,6 +141,7 @@ class AgentService:
         out_chan = out_chan or self.default_out_chan
         self.session_id = session_key or context.get("session_key") or "session-default"
         state = self.agent.get_state(self._thread_config()) if hasattr(self, "checkpointer") else None
+        received_event_type = context.get('_event_type')
         resume_row = None
         resume_value = None
         question_id = pending_question(state) if state is not None else None
@@ -223,7 +224,7 @@ class AgentService:
             if context.get("source") == "feishu":
                 from channels.device.feishu import discard_pending_images
                 discard_pending_images(context.get("open_id"), context.get("chat_id"), selected)
-        return self._complete_result(result, notifications, context, out_chan, resume_row)
+        return self._complete_result(result, notifications, context, out_chan, resume_row, received_event_type)
 
     @staticmethod
     def _is_resume_trigger(input_msg: str) -> bool:
@@ -256,7 +257,7 @@ class AgentService:
         return result, notifications
 
     def _complete_result(self, result: dict, notifications, context: dict, out_chan: BaseOutChannel,
-                         resume_row=None) -> dict:
+                         resume_row=None, received_event_type=None) -> dict:
         if result.get('__interrupt__'):
             waiting = next((value.value for value in result['__interrupt__']
                             if isinstance(value.value, dict) and value.value.get('kind') == 'ask_user_question'), None)
@@ -277,7 +278,9 @@ class AgentService:
         if notifications.silent:
             result["completion_reason"] = notifications.reason
         elif isinstance(final_content, str) and final_content.strip():
-            out_chan.write_message(final_content, context)
+            # 恢复轮次保留原始授权上下文，仅最终输出展示本次收到的事件类型。
+            reply_context = dict(context, _event_type=received_event_type) if resume_row else context
+            out_chan.write_message(final_content, reply_context)
         else:
             metadata = getattr(final_message, "response_metadata", None) or {}
             reason = metadata.get("finish_reason")

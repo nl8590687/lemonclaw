@@ -202,6 +202,9 @@ The existing shared main conversation is retained: terminal and Feishu requests 
 
 LemonClaw receives events through pluggable input channels and broadcasts replies to every enabled output channel. All channels publish to a single message bus consumed by the agent loop. The terminal is always enabled; when Feishu is enabled, replies go to both the terminal and Feishu.
 
+Feishu final replies use Card JSON 2.0 with a Markdown body. The top title displays the received event type (`terminal`, `lark_message`, `scheduled`, `webhook`, `system`, etc.); a missing type is shown as `未知`. After a human-confirmation resume, this is the event that resumed the turn. Long replies are delivered as ordered cards, with fenced code blocks continued across parts. Sending stops on the first failed part without resending earlier parts. Menu/error output and human-confirmation forms retain their existing behavior. Card JSON 2.0 requires Feishu client 7.20 or later.
+
+
 | Channel | Direction | Notes |
 |---------|-----------|-------|
 | **Terminal** | in/out | Always on. Interactive stdin + rich terminal output. |

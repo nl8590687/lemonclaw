@@ -74,7 +74,7 @@ class FeishuOutputChannel(BaseOutChannel):
         open_id = self._resolve_open_id(context)
         if not open_id or not self._sender or not msg:
             return False
-        return self._sender.send_markdown(open_id, msg)
+        return self._sender.send_markdown_card(open_id, msg, context.get("_event_type"))
 
     def print(self, msg: str):
         # 飞书侧不做流式增量输出，整体回复由 write_message 统一发送。
