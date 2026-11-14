@@ -448,3 +448,18 @@ def test_closed_card_retains_unanswered_questions(database, status):
     card = question_closed_card(row)
     assert row['payload']['questions'][0]['prompt'] in card['body']['elements'][2]['text']['content']
     assert '用户答案：未提交' in card['body']['elements'][2]['text']['content']
+
+
+def test_final_reply_reports_resume_event_type(database):
+    service = make_service(responses=[ask_message(), AIMessage(content='已完成')], tools=[ask_user_question])
+    try:
+        waiting = service.run('请处理', {'_event_type': 'terminal'})
+        qid = waiting['question_id']
+        row = service.questions.get(qid)
+        service.questions.submit(qid, parse_terminal(row['payload'], '1'))
+        service.run('[人工确认结果]', {'_event_type': 'system', '_question_ready_id': qid})
+        content, context = service.default_out_chan.write_message.call_args.args
+        assert content == '已完成'
+        assert context['_event_type'] == 'system'
+    finally:
+        service.close()
