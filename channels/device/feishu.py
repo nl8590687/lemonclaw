@@ -1122,7 +1122,7 @@ def markdown_reply_cards(text: str, event_type: object = None):
 
     def card(content, part):
         title = f'事件类型：{label}' + (f' · 续篇 {part}' if part > 1 else '')
-        return {'schema': '2.0', 'header': {'title': {'tag': 'plain_text', 'content': title}},
+        return {'schema': '2.0', 'header': {'template': 'blue', 'title': {'tag': 'plain_text', 'content': title}},
                 'body': {'elements': [{'tag': 'markdown', 'content': content}]}}
 
     def size(content, part):
