@@ -2,494 +2,90 @@
 
 [English](README.md) | [简体中文](README_ZH-CN.md)
 
-[![Python Version](https://img.shields.io/badge/Python-≥3.13-blue.svg?style=for-the-badge)](https://www.python.org/)
-[![Apache 2.0 Licensed](https://img.shields.io/badge/License-Apache%202.0-green.svg?style=for-the-badge)](https://opensource.org/license/apache-2.0)
-[![GitHub stars](https://img.shields.io/github/stars/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
-[![Last Commit](https://img.shields.io/github/last-commit/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
+[![Python](https://img.shields.io/badge/Python-3.13–3.15-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 
-> 一个开源的通用 AI 数字员工 Agent。
+> 可自行部署、通过终端或飞书使用的 AI 数字员工。
 
-LemonClaw 是一个开源的通用 AI Agent 框架，能把任意大模型变成可通过多通道触达的"数字员工"。内置 ReAct Agent 循环、16+ 开箱即用的工具、持久化记忆系统、定时任务与可插拔的输入/输出通道——全部数据落在一个 SQLite 数据库中。
+LemonClaw 将 OpenAI 兼容模型与文件、网页、Shell、定时任务等工具连接起来，支持持久化记忆、Skills、MCP 和多 Agent 工作流。你可以从一次终端对话开始，再接入飞书或 Webhook。
 
----
+[快速开始](docs/zh/getting-started.md) · [用户文档](docs/zh/index.md) · [部署与运维](docs/zh/deployment.md) · [问题反馈](https://github.com/nl8590687/lemonclaw/issues)
 
-## ✨ 特性
+## 可以做什么
 
-- 🎧 **多通道接入** —— 终端、Webhook、飞书/Lark、定时任务（Cron），统一消息总线驱动。
-- 🛠️ **16+ 内置工具** —— 文件编辑、grep/glob、git、网页抓取、联网搜索、邮件、HTTP、Shell、定时任务、记忆等。
-- 🧠 **持久化记忆** —— 基于 TF-IDF 的长期记忆块检索 + 会话自动归档，让上下文跨会话保留。
-- 🧩 **技能系统** -- 按需加载的技能包（`SKILL.md`），支持热加载、LRU 活跃集注入、敏感参数门禁与可选脚本执行。
-- 🔌 **MCP 接入** -- 通过 Streamable HTTP 接入外部 MCP 服务端；每个远程工具注册为原生 Agent 工具（`mcp__<服务名>__<工具名>`），在 `.lemonclaw/mcp.json` 声明，支持热重载且不中断当前对话。
-- 🔀 **多 Agent 工作流** -- 构建并运行基于 LangGraph 的多 Agent 工作流；声明式 JSON spec、子 Agent、人在回路（HITL）、动态路由、跨重启续跑。
-- 🔌 **OpenAI 兼容** —— 支持任意 OpenAI 兼容接口（DeepSeek、OpenAI、本地服务……）。
-- ⏰ **内置调度** —— 运行时创建与管理定时任务，Agent 可自行安排后续动作。
-- 🐳 **一键 Docker 部署** —— 镜像支持时区配置，挂载配置目录即可运行。
-- 🔒 **安全管控** —— Shell 工具按需开启，文件访问限定在白名单目录。
-- 💬 **斜杠命令** —— 不离开对话即可查看 Token、管理会话/记忆/定时任务/技能。
+- 查询网页、整理文件和总结资料；联网搜索等能力需要相应服务配置。
+- 保存偏好和历史信息，让后续对话可以检索已有记忆。
+- 安排定时任务，或通过多 Agent 工作流执行多阶段任务。
+- 使用 Skills 和 MCP 接入外部能力，在飞书中接收回复、发送文件和回答确认问题。
 
----
+这些是使用方向，不保证任意模型或外部服务都能完成所有任务；可用能力由模型、配置和权限决定。
 
-## 🏗️ 架构
+## 核心能力
 
-```mermaid
-flowchart LR
-    subgraph Inputs[输入通道]
-        T[终端]
-        W[Webhook]
-        C[Cron 定时]
-        F[飞书/Lark]
-    end
-    Inputs --> Bus[(消息总线)]
-    Bus --> Loop{Agent 循环}
-    Loop -->|"/" 命令| Cmd[命令处理器]
-    Loop -->|消息| Agent[Agent 服务]
-    Agent --> LLM[LLM<br/>OpenAI 兼容]
-    Agent --> Tools[工具<br/>16+ 内置]
-    Agent --> Mem[记忆<br/>TF-IDF + 归档]
-    Agent --> Skills[技能<br/>load/unload + 注入]
-    Agent --> MCP[MCP<br/>streamable HTTP]
-    Agent --> Out[输出通道]
-    Cmd --> Out
-    Out --> Resp[终端 / 飞书]
-```
+| 能力 | 说明 |
+|---|---|
+| 多入口 | 终端、飞书、Webhook、定时事件 |
+| 工具 | 文件操作、网页、HTTP、Git；Shell 按需开启 |
+| 持久化 | 单一 SQLite 数据库保存会话、记忆、任务等状态 |
+| 扩展 | Skills；MCP 支持 Streamable HTTP、SSE 和 stdio |
+| 工作流 | 子 Agent、条件路由、人工确认和中断恢复 |
+| 部署 | Python 源码运行或 Docker；模型服务单独配置 |
 
-### 项目结构
+## 快速开始
 
-```
-|- .lemonclaw/    LemonClaw 核心配置存储目录
-|--- .env         环境变量配置文件
-|--- .env.example 环境变量配置样例文件
-|--- mcp.json     MCP 服务端配置（Streamable HTTP；含密钥，已 gitignore）
-|--- lemonclaw.db 全局 SQLite3 数据库（整个项目仅此一个库）
-|- agent/         Agent 实现模块（循环、工具、LLM、记忆、技能、MCP）
-|- channels/      输入输出设备和通道、消息总线
-|- dao/           数据库 model 和 dao 操作模块
-|- config/        配置相关代码模块
-|- tests/         单元测试目录
-|- loop.py        Agent Loop 核心代码
-|- main.py        启动入口代码
-```
-
----
-
-## 📦 安装
-
-**环境要求：** Python 3.13-3.15。CI 验证 Python 3.13、3.14 与 3.15；Docker 镜像使用 Python 3.14。
-
-### 源码安装
+需要 **Python 3.13～3.15**、一个 OpenAI 兼容接口、API Key 和可用模型名称。以下为 Linux/macOS 源码运行示例；[Windows 和完整教程](docs/zh/getting-started.md)。
 
 ```bash
 git clone https://github.com/nl8590687/lemonclaw.git
 cd lemonclaw
 python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e '.[dev]'
+source .venv/bin/activate
+python -m pip install -e . -c constraints.txt
+cp .lemonclaw/.env.example .lemonclaw/.env
 ```
 
-只安装运行时依赖可用 `pip install -e .`；需要可复现的实验依赖可追加 `-c constraints.txt`。安装后会提供 `lemonclaw` 命令。
+编辑 `.lemonclaw/.env`，填写真实服务配置。以下地址、Key 和模型名是占位值：
 
-### 开发检查
+```ini
+OPENAI_BASE_URL=https://your-provider.example/v1
+OPENAI_API_KEY=your-api-key
+MODEL_NAME=your-model-name
+ENABLE_WEBHOOK=false
+ENABLE_FEISHU=false
+```
+
+在项目根目录启动：
 
 ```bash
-python -m pytest -q
-ruff check .
-basedpyright
-python -m build
+lemonclaw
 ```
 
-### 预构建镜像（ghcr.io）
+在终端发送“你好，请介绍你能做什么”，收到回复即可确认基本连接正常。`/help` 查看命令，`/exit` 退出。Docker 部署见[部署说明](docs/zh/deployment.md)。
 
-直接从 GitHub Container Registry 拉取最新镜像：
+## 使用前了解
 
-```bash
-docker pull ghcr.io/nl8590687/lemonclaw:latest
+- 模型 API、搜索和邮件等外部服务需要自行配置，可能产生费用。
+- Shell 默认关闭；文件访问受 `FILE_SAFE_DIRS` 限制。开启工具前确认它们可访问的数据和执行权限。
+- 终端与飞书默认共享个人主会话；飞书个人模式会绑定首个发送消息的用户，不应当作多用户隔离服务部署。
+- 生产环境需要持久化数据库、配置及附件，并安排备份；详见[运维文档](docs/zh/operations.md)。
 
-docker run -e TZ=Asia/Shanghai \
-  -v ./.lemonclaw:/root/.lemonclaw \
-  -p 8765:8765 \
-  -d --name lemonclaw ghcr.io/nl8590687/lemonclaw:latest
-```
+## 文档导航
 
-拉取特定版本：`ghcr.io/nl8590687/lemonclaw:v0.1.0`（标签与 git tag 对应）。
+| 我想…… | 阅读 |
+|---|---|
+| 安装、部署或排障 | [快速开始](docs/zh/getting-started.md)、[部署](docs/zh/deployment.md)、[排障](docs/zh/troubleshooting.md) |
+| 连接飞书、处理图片或使用 CLI | [通道](docs/zh/channels.md)、[图片](docs/zh/images.md)、[飞书 CLI](docs/zh/feishu-cli.md) |
+| 配置模型和工具 | [配置](docs/zh/configuration.md)、[工具](docs/zh/tools.md) |
+| 使用扩展和自动化 | [Skills](docs/zh/skills.md)、[MCP](docs/zh/mcp.md)、[工作流](docs/zh/workflows.md) |
+| 管理对话和任务 | [记忆](docs/zh/memory.md)、[命令](docs/zh/commands.md)、[人工确认](docs/zh/interaction.md) |
+| 贡献代码 | [贡献指南](docs/zh/contributing.md)、[架构](docs/zh/architecture.md) |
 
-### Docker 部署（从源码构建）
+截图、完整案例和部分运维教程尚待补充，见[文档首页](docs/zh/index.md)。
 
-```bash
-docker build --rm -t lemonclaw:0.0.1 .
+## 参与贡献
 
-# 默认 UTC。挂载配置目录并暴露 webhook 端口：
-docker run -e TZ=Asia/Shanghai \
-  -v ./.lemonclaw:/root/.lemonclaw \
-  -p 8765:8765 \
-  -d --name lemonclaw lemonclaw:0.0.1
-```
+欢迎提交问题、改进文档或贡献代码。请先阅读[贡献指南](docs/zh/contributing.md)和 [AGENTS.md](AGENTS.md)。用户可见行为变化应同步更新文档；开发过程及验证记录写入提交信息和 PR。
 
----
+## 许可证
 
-## 🚀 快速开始
-
-1. **配置环境** —— 复制样例文件并填入你的 LLM API Key：
-
-   ```bash
-   cp .lemonclaw/.env.example .lemonclaw/.env
-   ```
-
-   至少在 `.lemonclaw/.env` 中设置以下几项：
-
-   ```ini
-   OPENAI_BASE_URL=https://api.deepseek.com   # 任意 OpenAI 兼容接口
-   OPENAI_API_KEY=your-api-key
-   MODEL_NAME=deepseek-v4-pro
-   ```
-
-2. **启动：**
-
-   ```bash
-   lemonclaw
-   # 未安装入口点、仅在源码目录运行时可用：python main.py
-   ```
-
-3. **与你的 Agent 对话** —— 在终端交互，或向 webhook（默认 `http://127.0.0.1:8765`）发 POST 请求。输入 `/help` 查看全部斜杠命令。
-
----
-
-## ⚙️ 配置
-
-所有配置位于 `.lemonclaw/.env`（完整项见 `.env.example`）。主要分组：
-
-| 分组 | 用途 |
-|------|------|
-| `OPENAI_*` / `MODEL_*` | LLM 接口地址、模型、上下文窗口、温度、超时 |
-| `BOCHA_*` | 博查联网搜索 API（可选，开启后生效搜索工具） |
-| `EMAIL_*` | 邮件工具的 SMTP 服务器配置（可选） |
-| `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | 工具安全：Shell 工具开关、文件访问白名单 |
-| `WEB_*` | Web/HTTP 安全：私网访问开关、信任列表、私网写入开关、重定向/响应大小/超时 |
-| `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent 行为：ReAct 最大迭代次数、保留消息数 |
-| `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook 服务：主机/端口、鉴权 Token、频率限制 |
-| `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书/Lark 应用凭证 |
-| `FEISHU_RECEIVED_DIR` / `FEISHU_MAX_DOWNLOAD_MB` / `FEISHU_MAX_SEND_FILE_MB` / `FEISHU_PENDING_FILE_TTL_SECONDS` | 飞书文件：接收目录（默认 `/root/workspace/received`）、收发大小上限、纯文件暂存过期时间 |
-| `ENABLE_MEMORY` / `MEMORY_*` | 持久化记忆：上下文预算、最近会话数、检索块上限、自动归档 |
-| `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | 技能系统：总开关、脚本执行开关、活跃集上限、pip/npm 依赖镜像源 |
-| `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP 接入：总开关、连接/调用超时、单服务端工具数上限、结果截断阈值 |
-| `ENABLE_WORKFLOW` / `WORKFLOW_*` | 多 Agent 工作流：总开关、递归上限、嵌套上限、节点/分支上限、结果截断、Worker 池大小、HITL handler |
-
-模型调用通过 `LLM_API_TIMEOUT` 设置单次请求超时，`LLM_TOTAL_TIMEOUT` 限制包含重试、备用模型在内的总耗时。`LLM_MAX_RETRIES`（默认最多重试 10 次，主备模型共用预算）、`LLM_RETRY_BASE_DELAY`、`LLM_RETRY_MAX_DELAY` 控制带随机抖动的指数退避，限流时遵循 `Retry-After`。可设置 `LLM_FALLBACK_MODEL`，以及可选的 `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY`。Provider 熔断通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 与 `LLM_CIRCUIT_COOLDOWN` 配置。自动重试和切换适用于流式输出开始前的暂时性故障；失败时保留现有会话 checkpoint。总时限到达后释放调用方，已进入 SDK 的请求可能继续留在有容量上限的守护线程中直至返回。
-
-
-飞书用户请求接收后会添加 `Typing` 黄豆人表情，本轮主 Agent 成功返回非空回复后撤销 `Typing` 并添加 `DONE`。异常、中断或空回复只清理 `Typing`；系统命令和机器人消息跳过，图片分析命令参与。仅暂存、等待补充指令的附件不添加处理表情。机器人需具备 `im:message.reactions:write_only`（发送、删除消息表情回复）权限。表情接口失败会记录日志，不阻断消息处理。后台 Workflow 场景的 `DONE` 表示前台本轮回复完成，后台结果仍通过现有事件机制回传。
-
-### 图片输入
-
-主模型支持图像输入时设置 `ENABLE_VISION=True`（默认开启）。图片保存到 `FEISHU_RECEIVED_DIR`，会话 checkpoint 保存稳定附件引用；请求模型时按原始字节编码为 Base64 Data URL。支持按实际内容校验 JPEG、PNG、GIF、WebP。应用单次请求最多 8 张图、图片原始数据合计 20 MiB，单张最多 10 MiB。纯文本请求保持现有行为。
-
-```text
-/image "/path/带空格的图片.png" /path/b.jpg -- 比较这两张图
-/image img-<编号> img-<编号> -- 比较差异
-/image all -- 描述当前暂存图片
-/upload "/path/image.png"
-```
-
-`/image` 选择本轮图片，问题前使用 `--` 分隔；`/upload` 仅保存文件并返回路径/编号。飞书单独发图后会收到编号回执；可引用该图片消息并回复问题、用 `/image` 指定编号，或在同一条富文本消息中发送文字和图片。普通后续文字沿用附件路径说明机制，暂存图片通过明确选择加入视觉输入。`/upload` 将所有暂存图片标记为仅保存，`/upload <编号...>` 仅处理指定图片。暂存选择按 `FEISHU_PENDING_FILE_TTL_SECONDS` 过期，已有历史引用仍可使用。本地路径只允许在命令行选择。
-
-备用模型支持图片时再设置 `LLM_FALLBACK_ENABLE_VISION=True`；含图请求要求备用模型具备视觉能力。关闭视觉后请求只携带图片文字引用。请保留被历史引用的文件；图片缺失、变更或超过预算时会明确报错。上下文摘要使用同一图片适配层。Workflow 的 `llm`/`subagent` 节点通过 `config.image_ids` 或 `config.image_ids_field`（list 状态字段）显式传入当前来源会话的图片编号。图片生成属于后续独立能力，现有文件发送工具继续可用。
-
-主会话沿用现有共享机制，终端与飞书可继续同一段图片对话。历史图片按已保存的附件作用域读取，新选附件仍校验当前来源；需要独立会话时可指定不同的 `session_key`。
-
----
-
-## 📡 通道
-
-LemonClaw 通过可插拔的输入通道接收事件，并把回复广播给所有启用的输出通道。所有通道都发布到同一条消息总线，由 Agent 循环消费。终端始终输出；开启飞书后，终端与飞书会同时收到回复。
-
-| 通道 | 方向 | 说明 |
-|------|------|------|
-| **终端** | 输入/输出 | 始终开启。交互式 stdin + rich 终端输出。 |
-| **Webhook** | 输入 | HTTP 服务（默认 `127.0.0.1:8765`）。可选 `X-Auth-Token` 鉴权与每分钟限频。`ENABLE_WEBHOOK=true` 开启。 |
-| **飞书/Lark** | 输入/输出 | 机器人消息。需 `ENABLE_FEISHU=true` 加上 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在飞书开发者后台配置事件订阅。个人专用模式下，首个向机器人发消息的飞书用户会被自动绑定（持久化在 `lemonclaw.db`），其他飞书用户的消息会被忽略；所有飞书输出固定回复给该绑定用户，同时终端始终输出。支持接收文件/图片/音视频并保存到 `FEISHU_RECEIVED_DIR`；纯文件消息会暂存，等用户补充文本后再与该轮文本一起进入 Agent。 |
-| **Cron** | 输入 | 定时任务。始终开启；任务可在运行时通过 `/cron` 命令或 cron 工具管理。 |
-
----
-
-## 🛠️ 内置工具
-
-| 工具 | 说明 | 可用性 |
-|------|------|--------|
-| `time` | 当前日期/时间 | 始终 |
-| `http_request` | 任意 HTTP 请求 | 始终 |
-| `web_fetch` | 抓取并提取网页内容 | 始终 |
-| `read_file` / `write_file` / `edit_file` | 文件读 / 写 / 增量编辑 | 始终（白名单目录） |
-| `file_list_query` | 列出目录下的文件 | 始终（白名单目录） |
-| `glob` / `grep` | 文件通配匹配 / 内容搜索 | 始终（白名单目录） |
-| `git` | 常用 git 操作 | 始终 |
-| `sleep` | 等待一段时长 | 始终 |
-| `cron` | 创建 / 列出 / 删除定时任务 | 始终 |
-| `bocha_search` | 通过博查 API 联网搜索 | 可选（需 `BOCHA_API_KEY`） |
-| `email` | 通过 SMTP 发送邮件 | 可选（需 `EMAIL_*`） |
-| `bash` | 执行 Shell 命令 | 可选（需 `ENABLE_BASH_TOOL=true`） |
-| `feishu_send_file` | 把工作空间内的文件/图片/音频/MP4 发送给当前飞书会话 | 可选（需完整飞书配置） |
-| `memory` | 读写持久化记忆 | 可选（需 `ENABLE_MEMORY=true`） |
-| `load_skill` / `unload_skill` | 激活 / 卸载技能（指令由中间件注入） | 可选（需 `ENABLE_SKILLS=true`） |
-| `run_skill_script` | 在技能隔离环境执行 Python/Node 脚本 | 可选（需 `ENABLE_SKILL_SCRIPT=true`） |
-| `mcp__<服务名>__<工具名>` | 已连接 MCP 服务端暴露的工具（Streamable HTTP） | 可选（需 `ENABLE_MCP=true` + `.lemonclaw/mcp.json`） |
-| `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | 定义、运行、续跑、管理多 Agent 工作流 | 可选（需 `ENABLE_WORKFLOW=true`） |
-
-> 可扩展：在 `agent/tools/` 下新增工具，并在 `create_tool_list()` 中注册即可。
-
-> **Web/HTTP 安全边界**：私网/本地目标只能由用户**当前消息中的完整 URL**授权，或加入 `WEB_PRIVATE_ALLOWLIST`；网页、搜索结果和工具输出中的 URL 不构成授权。私网目标默认只允许只读方法，重定向逐跳复检；网页/HTTP 响应会标记为不可信外部数据。
-
----
-
-## 🧠 记忆系统
-
-当 `ENABLE_MEMORY=true` 时，LemonClaw 会在唯一的 SQLite 数据库中维护持久化记忆：
-
-- **长期记忆块** —— 以可检索的块形式存储事实、偏好与知识，查询时通过 **TF-IDF** 召回。
-- **会话归档** —— 会话结束时自动摘要归档，便于后续召回。
-- **记忆工具** —— 使用 `recall_memory` 检索历史事实与决策，使用 `list_memory` 读取核心偏好和项目背景。
-- **历史维护** —— 每轮结束仅缩短保留区外的超长工具文本/入参字符串（`CONTEXT_TOOL_MAX_CHARS`，默认每字符串 12000 字符）；达到上下文 80% 阈值才统一摘要较早历史。最近至少 `CONTEXT_MIN_FULL_MESSAGES` 条消息完整保留，边界遇到工具调用/结果组时向前扩展。
-
-可通过 `/memory`、`/chunk`、`/session` 命令在运行时管理记忆。
-
----
-
-## 🧩 技能系统
-
-当 `ENABLE_SKILLS=true`（默认）时，LemonClaw 把可复用的工作流封装为按需加载的**技能包**。把技能目录放入 `.lemonclaw/skills/`，Agent 即可在运行时发现并加载。
-
-### 技能包格式（OpenClaw 兼容）
-
-```
-.lemonclaw/skills/<name>-<version>/
-├── SKILL.md         # 必需 - YAML frontmatter（name/description/tags）+ markdown 指令
-├── _meta.json       # 可选 - slug/version 元数据
-├── requirements.txt # 可选 - Python 依赖（启用该技能的 run_skill_script）
-├── package.json     # 可选 - Node 依赖
-└── *.md             # 可选 - 附带参考文档（追加到加载内容后）
-```
-
-`SKILL.md` frontmatter 样例：
-
-```yaml
----
-name: weekly-report
-description: 生成每周工作总结
-tags: [report, work]
-metadata:
-  openclaw:
-    emoji: 📊
-    requires:
-      env:
-        - BOCHA_API_KEY   # 声明所需环境变量
-    primaryEnv: BOCHA_API_KEY
----
-```
-
-### 工作机制
-
-- **发现** - 启动时与 `/skills reload` 时扫描技能目录，元数据索引到 SQLite 库。
-- **路由** - 每轮将所有*可用*技能的摘要（name + description + tags）注入系统提示，供 LLM 选择。
-- **激活** - Agent 调用 `load_skill(name)` 激活技能；其完整指令随后由上下文中间件每轮注入（不进消息历史，不会被上下文压缩丢失）。
-- **LRU + 卸载** - 最多 `MAX_ACTIVE_SKILLS`（默认 5）个技能同时活跃（LRU 淘汰）；用完后 Agent 调 `unload_skill(name)` 卸载。
-- **热加载** - 新增/修改/删除技能包后执行 `/skills reload`，立即生效，无需重启。
-
-### 敏感参数（API Key 等）
-
-技能在 frontmatter 声明所需环境变量。在 `.lemonclaw/.env` 中**配置一次**即永久生效；`/skills reload` 拾取新增密钥。缺配置的技能标 `⚠ 缺配置` 且不向 Agent 暴露。密钥绝不进入 LLM 上下文--技能正文用 `${VAR}` 占位符，由 `http_request` 在服务端替换。
-
-### 脚本技能（Python / Node）
-
-若技能含 `requirements.txt` / `package.json`，用 `/skills setup <name>` 一次性安装依赖（隔离 venv / `node_modules`，默认国内镜像）。通过 `run_skill_script` 工具执行脚本（受 `ENABLE_SKILL_SCRIPT` 控制，默认关闭；路径围栏、无 shell、跨平台）。Node 技能需在镜像中预装 `node`/`npm`。
-
----
-
-## 🔌 MCP 接入
-
-当 `ENABLE_MCP=true`（默认）时，LemonClaw 作为 **MCP 客户端**通过 **Streamable HTTP** 接入（不支持 stdio）。每个已连接 MCP 服务端暴露的工具都会注册为原生 Agent 工具，命名 `mcp__<server_id>__<tool>`，LLM 可带完整参数 schema 直接调用。
-
-> LemonClaw 仅作为 MCP **客户端**（消费外部工具），不对外提供 MCP 服务端能力。
-
-### 配置服务端（`.lemonclaw/mcp.json`）
-
-服务端在 `.lemonclaw/mcp.json` 中声明--一个以 `server_id` 为 key 的 JSON 对象（对象 key 天然唯一，且 id 同时作为工具名前缀）。编辑该文件后执行 `/mcp reload`（或重启）即生效，**无需 CLI**，适合 Docker / 只读部署。
-
-```json
-{
-  "mindoc": {
-    "url": "https://mindoc.example.com/mcp",
-    "headers": {"Authorization": "Bearer ghs_xxxxxxxx"},
-    "auto_connect": true
-  },
-  "github": {
-    "url": "https://api.github.example/mcp",
-    "headers": {},
-    "auto_connect": true
-  }
-}
-```
-
-- `url` - MCP Streamable HTTP 端点。
-- `headers` - 额外请求头。**认证密钥直接写在这里**（见下方安全说明）。
-- `auto_connect` - 是否启动时自动连接（默认 `true`）。
-- `enabled` **不在文件中**--它是 DB 管理状态，由 `/mcp enable|disable` 切换。
-
-模板见 `.lemonclaw/mcp.json.example`（占位值，可安全提交）。
-
-### 安全：密钥不进入 LLM 上下文
-
-`headers`（含 token）是 `MCPConnection` 持有的**服务端连接配置**，绝不放入工具名 / 描述 / 参数 / 结果，因此不会进入 LLM 上下文、DB 镜像的 checkpointer 或 LLM API 请求体。因 `mcp.json` 含密钥，已 **gitignore**；团队共享配置用 `mcp.json.example` 模板。（这与技能系统不同--技能正文会被注入系统提示，故需 `${VAR}` 占位符；MCP 的 headers 不注入，无需占位符。）
-
-### 工作机制
-
-- **发现** - 启动时与 `/mcp reload` 时，每个 enabled 服务端执行连接：`initialize` 握手 -> `Mcp-Session-Id` -> `notifications/initialized` -> `tools/list`。每个远程工具成为 `mcp__<id>__<tool>` Agent 工具。
-- **调用** - LLM 调用工具；`MCPConnection` 发起 `tools/call`（兼容 `application/json` 与 `text/event-stream` 两种响应），格式化并截断结果。
-- **热重载** - `/mcp reload`（或 `add`/`remove`/`enable`/`disable`/`reconnect`）重读 `mcp.json`、重连、**重建 agent 同时保留 checkpointer**--当前对话不中断。
-- **上限** - 单服务端 `MCP_MAX_TOOLS`（默认 100）、全局硬上限 200 个 MCP 工具；结果按 `MCP_RESULT_MAX_CHARS`（默认 20000）截断。
-- **容错** - 单个服务端不可达不影响其他服务端与内置工具；`ENABLE_MCP=false` 或初始化失败降级为"无 MCP 工具"，不阻塞 Agent。
-
-### 运行时管理
-
-`/mcp` 命令（输入 `/mcp help` 查看完整列表）：`list`、`add <id> <url> [headers_json]`（回写 `mcp.json`）、`remove`、`enable`、`disable`、`tools <id>`、`reconnect`、`reload`、`call <id> <tool> [json_args]`。命令输出不展示 headers 值。
-
----
-
-## 🔀 多 Agent 工作流
-
-节点 config 支持 `timeout_seconds`（默认 300 秒）、`max_retries`（默认 0）、指数退避 `retry_backoff`（默认 1 秒）以及 `on_error`（`fail`、`continue`、`compensate`）。补偿通过 `compensation` 声明 `tool_name` 与 `args`。仅对可安全重复的操作配置重试。取消在节点、模型与工具调用边界生效，并保留 checkpoint。超时的阻塞调用可能继续留在守护线程中，其结果会被丢弃，后续调用会被阻止；超时会明确报错，不自动重试或补偿。尚未结束的节点调用最多 32 个，容量占满时新节点明确报错。
-
-
-简单查询由主 Agent 直接完成；多阶段调查、核验汇总和长任务优先使用后台 Workflow。使用 `workflow_list_defs` 检查可复用定义，`workflow_execute` 启动后返回 run_id，后续由事件回调继续处理。子 Agent 通过 `tools` 和 `skills` 声明所需工具及技能，技能正文进入其 system prompt。
-
-周期业务可用 `create_cron_task(prompt="每日天气报告", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"上海"}')` 绑定已定义的可复用 Workflow。每次触发创建独立 run，计划使用服务本地时区。`update_cron_task` 可更新绑定及输入，`workflow_id=""` 恢复提示词任务。
-
-
-当 `ENABLE_WORKFLOW=true`（默认）时，LemonClaw 可构建并运行**基于 LangGraph 的多 Agent 工作流**。架构中设计了**两个"在回路中"的参与者**：**主 Agent** 和**人**。主 Agent 不仅是定义工作流的编排者——它**自身也是回路中的积极参与者**：可作为节点在流程执行中被回调（`main_agent` 节点）、随时监督检查和控制调整在途 run（监督命令）、同时作为人介入工作流的唯一界面（HITL 经主 Agent 通知与恢复）。这与简单的"工作流结果回调"有本质区别——**主 Agent 是工作流回路中的一等公民，而非被动终端**。**`loop_forever` 不做任何改动**——工作流与 LangGraphLoop 事件通过既有消息总线与 Agent 工具接入。
-
-### 核心能力
-
-- **主 Agent 在回路** vs. **人在回路** — 两个独立的"回路参与者"：
-  - **主 Agent 在回路**：主 Agent 是回路中的积极参与者。它可作为 `main_agent` 节点在流程执行中被回调（带完整会话记忆与工作流工具，实现动态递归）；也可**随时监督检查和控制调整**在途 run——不限于预定义回调点——通过监督命令（`/wf inspect`、`/wf inject`）与工具（`workflow_inspect_run`、`workflow_inject`）。这是"主 Agent 在回路中"，区别于被动的结果投递。
-  - **人在回路**：`human` 节点暂停执行，**通过主 Agent** 通知用户（主 Agent 是人介入工作流的唯一界面——人不与子 Agent 直接交互，不"越级"）。`run_id` 在消息文本中双向携带；主 Agent 提取后调 `workflow_resume(run_id, 答复)` 续跑。
-- **声明式 spec** — 通过单次 `workflow_define(name, description, spec)` 调用定义工作流（JSON：`state_schema` / `nodes` / `edges` / `conditionals`），无需代码生成。
-- **子 Agent**（`subagent` 节点）— 声明工具集、系统提示与技能，每次执行使用独立会话。`BaseSubAgent` + `GeneralSubAgent` 体系 + 可插拔注册表，后续可接入专用 SubAgent（浏览器操作、SSH 等）。
-- **超越 DAG** — 条件边支持 LLM 路由与状态字段路由，同时支持回环（`recursion_limit` 保护）。
-- **持久化执行** — run 通过 `SqliteSaver` checkpoint 到唯一 `.lemonclaw/lemonclaw.db`。暂停的 run 跨进程重启仍可续跑（数小时/数天后）。
-- **后台 Worker 池** — 工作流分段在有界线程池中执行（`WORKFLOW_WORKER_POOL_SIZE`，默认 4），主 Agent 循环永不阻塞。
-- **一次性工作流** — spec 中标记 `"one_shot": true`，run 完成/出错后自动删除定义、全部 run 与 checkpoint。
-
-### 三步构建与运行
-
-**1. 定义** — 主 Agent 调 `workflow_define`，给出 JSON spec：
-
-```json
-{
-  "state_schema": [{"name": "answer", "type": "str"}, {"name": "summary", "type": "str"}],
-  "nodes": [
-    {"name": "ask", "kind": "human", "config": {"question": "请确认搜索范围。", "output_field": "answer"}},
-    {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "你是一个摘要员。", "tools": ["web_search"], "task": "总结：{answer}", "output_field": "summary"}}
-  ],
-  "edges": [{"src": "START", "dst": "ask"}, {"src": "ask", "dst": "summarize"}, {"src": "summarize", "dst": "END"}]
-}
-```
-
-**2. 执行** — 主 Agent 调 `workflow_execute("workflow_id")`。工作流在后台 Worker 线程中执行；遇 `human` 节点暂停，发 `LangGraphLoop` 消息给主 Agent（经既有消息总线——无特殊分发）。
-
-**3. 续跑（HITL）** — 用户在消息文本中带上 `run_id` 答复（如 `wf_run_xxx 同意，限近一周`）。主 Agent 提取 `run_id`，调 `workflow_resume(run_id, 答复)` 续跑。
-
-### 运行时管理
-
-`/wf` 命令（输入 `/wf help` 查看完整列表）：`list`、`runs [status]`（active/running/paused/all）、`resume <id> <value>`、`cancel <id>`、`delete <id>`。主 Agent 也拥有 `workflow_list`（查运行/阻塞中的 run）、`workflow_inspect_run`、`workflow_inject` 工具。
-
-> `python` 节点与沙箱机制**本期未实现**；待沙箱选型完成后与 skill 脚本系统统一支持。
-
----
-
-## 💬 斜杠命令
-
-在任意对话中可用（输入 `/help` 查看完整列表）：
-
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助 |
-| `/tokens` | 查看累计 Token 用量 |
-| `/clear` | 清空当前对话 |
-| `/session` / `/session show <id>` | 列出最近会话 / 查看某会话历史 |
-| `/resume [id]` | 原地续写指定 id 或最近一次会话 |
-| `/chunk` | 管理长期记忆块（list/add/get/delete/search） |
-| `/memory` | 管理核心记忆（set/get/delete/list） |
-| `/cron` | 列出并管理定时任务（`/cron help` 查看子命令） |
-| `/skills` | 列出并管理技能（`/skills help` 查看子命令：list/show/enable/disable/unload/setup/reload） |
-| `/mcp` | 列出并管理 MCP 服务端（`/mcp help` 查看子命令：list/add/remove/enable/disable/tools/reconnect/reload/call） |
-| `/wf` | 列出并管理工作流（`/wf help` 查看子命令：list/runs/resume/cancel/delete） |
-| `/exit` `/quit` `/q` | 退出 |
-
----
-
-## 🤝 参与贡献
-
-欢迎贡献！请先阅读 [AGENTS.md](AGENTS.md) —— 其中说明了项目结构与任何改动都必须遵守的约束（如单 SQLite 库规则）。
-
-1. Fork 仓库并创建特性分支。
-2. 保持现有代码风格与架构不变。
-3. 在 `tests/` 下补充相应测试。
-4. 提交 Pull Request 描述你的改动。
-
----
-
-## 📄 许可证
-
-基于 [Apache License 2.0](LICENSE) 开源。Copyright © 2026 LemonClaw Contributors.
-
-### 关键通知与静默完成
-
-主 Agent 默认发送最终答复；`notify_progress(message, kind)` 仅用于必要的关键进展、阻碍或完整结果交付，每轮最多三条、每条最多 2000 字，重复通知不发送。它复用当前输出通道，不更改接收人；飞书状态表情在整轮结束时更新。
-
-`finish_silently(reason, outcome)` 必须单独调用。后台 webhook、系统、Workflow 回传或自定义事件可在确认无需关注后以 `no_action_needed` 结束；用户消息与定时任务禁止此路径。只有本轮已成功通过 `notify_progress(kind="delivered_result")` 完整交付，才允许 `already_delivered` 避免重复回复。普通进度不算交付；不符合条件时返回工具错误说明，Agent 继续执行。工具结果先保存到 checkpoint，再结束执行图；成功静默完成仍触发 Typing → DONE。
-
-通知和静默工具仅供前台主 Agent 使用，不供 Workflow 节点或子 Agent 调用。提示词要求报告、异常、待确认事项正常交付；程序校验事件类型、交付标记、通知上限和独立调用，是否确实无需用户关注仍由模型依据任务判断。
-
-### 关键问题人工确认（主 Agent）
-
-`ask_user_question` 仅在任务需要用户作出关键选择或补充关键资料时使用，必须单独调用；Workflow 的 `human` 节点可由主 Agent 代问，取得 `confirmed` 后再 `workflow_resume`。取消或超时会结束当前主 Agent 轮次，Workflow 保持暂停，不自动猜选项或续跑。
-
-工具参数示例：
-
-```json
-{
-  "reason": "有两位同名联系人，需要确定报告发送对象",
-  "questions": [
-    {"prompt": "请选择负责人", "kind": "single", "options": ["研发部小明", "市场部小明"]}
-  ],
-  "timeout_seconds": 3600
-}
-```
-
-- `kind` 支持 `single`、`multiple`、`text`；最多 8 题，选择题最多 12 项，每个选项最多 80 字。文本题不传选项。
-- `timeout_seconds` 默认 3600 秒，最小 1200 秒（20 分钟），最大 86400 秒（24 小时）；越界拒绝，不自动缩短。超时返回 `{"status":"timeout","action":"cancel","answers":[]}`，取消返回 `cancelled`，成功为 `confirmed`。
-- 终端单个单选题输入 `1`，多选输入 `1,2`；自定义输入 `0:实际是小王`。`0` 必须独立选择并填写实际内容。
-- 多个文本题输入 `1:小明,2:28岁`，各部分两端空格忽略。多个选择题可用 `1:1,3,2:2`（第 1 题选择 1、3，第 2 题选择 2）。文本中的普通逗号保留，逗号后出现“题号:”视作下一个字段。
-- 飞书使用 Card 2.0 原生下拉单选/多选、文本框与表单提交；每个选择题附带“以上均不是”输入框。“取消”位于表单外，不受必填项阻止。
-- 在原输入入口用 `/question` 重看/重发当前问题、`/cancel` 取消；重发不延长截止时间。`/clear` 会清理当前会话并使旧问题失效。
-- 只接受原入口/发起用户回答；飞书校验用户、聊天（若已知）、卡片消息及随机凭据，重复/过期点击不会再次续跑。
-- 等待采用 LangGraph interrupt，问题、截止时间和提交状态写入同一 SQLite；不 sleep 等待，不占住主循环。重启后可继续回答，离线时间计入超时。主循环每秒检查待处理结果/超时；若主循环正在执行其他任务，在下一次调度时处理。
-- 原飞书用户请求等待时保留 Typing，恢复完成、取消或超时后转换为 DONE；错误回答不会结束等待。
-
-飞书应用需在开放平台“事件与回调 → 回调配置”启用 **卡片回传交互 `card.action.trigger`**，使用现有长连接接收，无需额外公网回调 URL；沿用机器人发送消息权限。问题直接发往原聊天/用户，不通过广播展示。未配置回调时可用原聊天中的文本命令作答或取消；卡片丢失可 `/question` 重发，始终保留超时取消兜底。
-
-普通 ReAct 中断会在下一条输入到达时自动从 checkpoint 续跑；`继续` 等续跑指令只恢复原任务，其他输入会在恢复完成后继续处理。中断时正在执行的工具可能被重新执行，外部写操作应保证幂等。外部接口及卡片真实租户显示仍需人工联调。
-
-人工确认暂停属于 LangGraph 控制流，不显示为工具错误。等待期间原工具调用尚未返回；内部恢复信号只执行 `Command(resume=...)`，不会追加新用户消息。提交、取消或超时后，工具结果使用原 `tool_call_id` 配对；原生工具异常仍正常报告。
-
-### Bash 中使用飞书 CLI
-
-Docker 镜像预装 Node.js 24、npm 和 `@larksuite/cli` 1.0.100；构建参数
-`NODE_IMAGE`、`LARK_CLI_VERSION` 可覆盖默认值。启用 `ENABLE_BASH_TOOL=true`
-并配置现有的 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 后，Bash 子进程会自动获得
-CLI 的应用凭证、`feishu` 品牌和短期 tenant access token，无需重复配置容器环境变量。
-SDK 缓存 token，并在过期前重新获取；每次 Bash 调用重新取 SDK 中的有效值。
-已经启动的长时间命令不会在进程内自动替换 token，过期后需重新调用。
-应用身份初始化失败会阻止本次 Bash 执行，检查配置和网络后重试。
-
-应用密钥和 token 不写入镜像，但 Bash 命令能够读取子进程环境，应只向可信任务开放。
-用户 OAuth 授权不在此次集成范围；应用凭证不能代替用户授权。
-在 `LARK_CHANNEL` bridge 环境中保留已有身份绑定，不覆盖其 profile。
-工具输出会遮蔽 CLI 密钥和 token 的明文原值；这不能阻止命令读取或转换这些值。
+[Apache License 2.0](LICENSE)。Copyright © 2026 LemonClaw Contributors.
