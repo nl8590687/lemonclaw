@@ -2,488 +2,90 @@
 
 [English](README.md) | [简体中文](README_ZH-CN.md)
 
-[![Python Version](https://img.shields.io/badge/Python-≥3.13-blue.svg?style=for-the-badge)](https://www.python.org/)
-[![Apache 2.0 Licensed](https://img.shields.io/badge/License-Apache%202.0-green.svg?style=for-the-badge)](https://opensource.org/license/apache-2.0)
-[![GitHub stars](https://img.shields.io/github/stars/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
-[![Last Commit](https://img.shields.io/github/last-commit/nl8590687/lemonclaw?style=for-the-badge)](https://github.com/nl8590687/lemonclaw)
+[![Python](https://img.shields.io/badge/Python-3.13–3.15-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 
-> An open-source, universal AI digital employee agent.
+> A self-hosted AI digital employee, accessible through your terminal or Feishu.
 
-LemonClaw is an open-source, general-purpose AI agent framework that turns any LLM into a "digital employee" you can reach through multiple channels. It ships with a ReAct agent loop, 16+ built-in tools, a persistent memory system, scheduled tasks, and pluggable input/output channels — all backed by a single SQLite database.
+LemonClaw connects OpenAI-compatible models to file, web, shell, and scheduling tools, with persistent memory, Skills, MCP, and multi-agent workflows. Start with a terminal conversation, then connect Feishu or Webhook input.
 
----
+[Quick start](docs/en/getting-started.md) · [User documentation](docs/en/index.md) · [Deployment and operations](docs/en/deployment.md) · [Issues](https://github.com/nl8590687/lemonclaw/issues)
 
-## ✨ Features
+## What can you use it for?
 
-- 🎧 **Multi-channel access** — Terminal, Webhook, Feishu/Lark, and Cron (scheduled tasks), all running on a unified message bus.
-- 🛠️ **16+ built-in tools** — file editing, grep/glob, git, web fetch, web search, email, HTTP, shell, cron, memory, and more.
-- 🧠 **Persistent memory** — TF-IDF retrieval over long-term memory chunks plus automatic session archival, so context survives across sessions.
-- 🧩 **Skills** — on-demand skill packages (`SKILL.md`) with hot-reload, LRU active-set injection, sensitive-param gating, and optional script execution.
-- 🔌 **MCP integration** - connect external MCP servers over Streamable HTTP, SSE, or stdio; each remote tool becomes a first-class agent tool (`mcp__<server>__<tool>`), declared in `.lemonclaw/mcp.json` and hot-reloadable without losing the conversation.
-- 🔀 **Multi-Agent Workflow** — build and run LangGraph-based multi-agent workflows with declarative JSON specs; sub-agents, human-in-the-loop (HITL), dynamic routing, and cross-restart resumption via persistent checkpointing.
-- 🔌 **OpenAI-compatible** — works with any OpenAI-compatible API (DeepSeek, OpenAI, local servers, …).
-- ⏰ **Built-in scheduling** — create and manage cron tasks at runtime; the agent can schedule its own follow-ups.
-- 🐳 **One-command Docker deploy** — timezone-aware image, just mount the config dir.
-- 🔒 **Safety controls** — shell tool is opt-in, file access is restricted to whitelisted directories.
-- 💬 **Slash commands** — inspect tokens, manage sessions/memory/cron/skills without leaving the conversation.
+- Research web pages, organize files, and summarize information. Some tools, including search, require additional services.
+- Save preferences and facts for retrieval in later conversations.
+- Schedule tasks or use multi-agent workflows for multi-stage work.
+- Extend capabilities through Skills and MCP; receive replies, send files, and answer confirmation questions in Feishu.
 
----
+These are usage scenarios, not guarantees for every model or external service. Capabilities depend on your model, configuration, and permissions.
 
-## 🏗️ Architecture
+## Core capabilities
 
-```mermaid
-flowchart LR
-    subgraph Inputs[Input Channels]
-        T[Terminal]
-        W[Webhook]
-        C[Cron]
-        F[Feishu/Lark]
-    end
-    Inputs --> Bus[(Message Bus)]
-    Bus --> Loop{Agent Loop}
-    Loop -->|"/" command| Cmd[Command Handler]
-    Loop -->|message| Agent[Agent Service]
-    Agent --> LLM[LLM<br/>OpenAI-compatible]
-    Agent --> Tools[Tools<br/>16+ built-in]
-    Agent --> Mem[Memory<br/>TF-IDF + Archive]
-    Agent --> Skills[Skills<br/>load/unload + inject]
-    Agent --> MCP[MCP<br/>HTTP / SSE / stdio]
-    Agent --> Out[Output Channel]
-    Cmd --> Out
-    Out --> Resp[Terminal / Feishu]
-```
+| Capability | Description |
+|---|---|
+| Entry points | Terminal, Feishu, Webhook, and scheduled events |
+| Tools | Files, web, HTTP, Git; opt-in shell execution |
+| Persistence | One SQLite database for sessions, memory, tasks, and other state |
+| Extensions | Skills; MCP over Streamable HTTP, SSE, and stdio |
+| Workflows | Sub-agents, conditional routing, human confirmation, and recovery |
+| Deployment | Python source or Docker; configure your model provider separately |
 
-### Project structure
+## Quick start
 
-```
-|- .lemonclaw/    LemonClaw core config storage
-|--- .env         Environment variables
-|--- .env.example Example env file
-|--- mcp.json     MCP server config (HTTP / SSE / stdio; gitignored - contains secrets)
-|--- lemonclaw.db Global SQLite3 database (single DB for the whole project)
-|- agent/         Agent implementation (loop, tools, LLM, memory, skills, MCP)
-|- channels/      Input/output devices and the message bus
-|- dao/           Database models and DAO operations
-|- config/        Configuration
-|- tests/         Unit tests
-|- loop.py        Agent loop core
-|- main.py        Entry point
-```
-
----
-
-## 📦 Installation
-
-**Prerequisites:** Python 3.13-3.15. CI verifies Python 3.13, 3.14 and 3.15; the Docker image uses Python 3.14.
-
-### Install from source
+You need **Python 3.13–3.15**, an OpenAI-compatible endpoint, API key, and available model name. The following source-install example is for Linux/macOS; see the [full guide and Windows instructions](docs/en/getting-started.md).
 
 ```bash
 git clone https://github.com/nl8590687/lemonclaw.git
 cd lemonclaw
 python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e '.[dev]'
+source .venv/bin/activate
+python -m pip install -e . -c constraints.txt
+cp .lemonclaw/.env.example .lemonclaw/.env
 ```
 
-Use `pip install -e .` for runtime dependencies only, or add `-c constraints.txt` to the install command for the tested dependency lock. The `lemonclaw` console script is installed with the package.
+Edit `.lemonclaw/.env` with your provider settings. The following endpoint, key, and model name are placeholders:
 
-### Development checks
+```ini
+OPENAI_BASE_URL=https://your-provider.example/v1
+OPENAI_API_KEY=your-api-key
+MODEL_NAME=your-model-name
+ENABLE_WEBHOOK=false
+ENABLE_FEISHU=false
+```
+
+Start from the project root:
 
 ```bash
-python -m pytest -q
-ruff check .
-basedpyright
-python -m build
+lemonclaw
 ```
 
-### Pre-built image (ghcr.io)
+Ask “Hello, what can you do?” in the terminal. A reply verifies basic connectivity. Use `/help` for commands and `/exit` to quit. For Docker, see [deployment](docs/en/deployment.md).
 
-Pull the latest image directly from GitHub Container Registry:
+## Before you use it
 
-```bash
-docker pull ghcr.io/nl8590687/lemonclaw:latest
+- Configure external model, search, and email services yourself; provider fees may apply.
+- Shell execution is off by default; `FILE_SAFE_DIRS` restricts file access. Review data access and execution permissions before enabling tools.
+- Terminal and Feishu share the personal main session by default. Feishu personal mode binds the first messaging user; it is not a multi-user isolation service.
+- Persist configuration, database, and attachments and plan backups for production. See [operations](docs/en/operations.md).
 
-docker run -e TZ=Asia/Shanghai \
-  -v ./.lemonclaw:/root/.lemonclaw \
-  -p 8765:8765 \
-  -d --name lemonclaw ghcr.io/nl8590687/lemonclaw:latest
-```
+## Documentation
 
-To pull a specific version: `ghcr.io/nl8590687/lemonclaw:v0.1.0` (tags match git tags).
+| I want to… | Read |
+|---|---|
+| Install, deploy, or troubleshoot | [Quick start](docs/en/getting-started.md), [deployment](docs/en/deployment.md), [troubleshooting](docs/en/troubleshooting.md) |
+| Connect Feishu, use images or CLI | [Channels](docs/en/channels.md), [images](docs/en/images.md), [Feishu CLI](docs/en/feishu-cli.md) |
+| Configure models and tools | [Configuration](docs/en/configuration.md), [tools](docs/en/tools.md) |
+| Extend and automate | [Skills](docs/en/skills.md), [MCP](docs/en/mcp.md), [workflows](docs/en/workflows.md) |
+| Manage conversations and tasks | [Memory](docs/en/memory.md), [commands](docs/en/commands.md), [human confirmation](docs/en/interaction.md) |
+| Contribute code | [Contributing](docs/en/contributing.md), [architecture](docs/en/architecture.md) |
 
-### Run with Docker (build from source)
+Screenshots, complete examples, and some operations guides remain to be added; see the [documentation index](docs/en/index.md).
 
-```bash
-docker build --rm -t lemonclaw:0.0.1 .
+## Contributing
 
-# Default (UTC). Mount the config dir and expose the webhook port:
-docker run -e TZ=Asia/Shanghai \
-  -v ./.lemonclaw:/root/.lemonclaw \
-  -p 8765:8765 \
-  -d --name lemonclaw lemonclaw:0.0.1
-```
+Issues, documentation improvements, and code contributions are welcome. Read the [contribution guide](docs/en/contributing.md) and [AGENTS.md](AGENTS.md). Update documentation for user-facing behavior changes; keep development history and validation in commits and PRs.
 
----
+## License
 
-## 🚀 Quick Start
-
-1. **Configure environment** — copy the example and fill in your LLM API key:
-
-   ```bash
-   cp .lemonclaw/.env.example .lemonclaw/.env
-   ```
-
-   At minimum, set these in `.lemonclaw/.env`:
-
-   ```ini
-   OPENAI_BASE_URL=https://api.deepseek.com   # any OpenAI-compatible endpoint
-   OPENAI_API_KEY=your-api-key
-   MODEL_NAME=deepseek-v4-pro
-   ```
-
-2. **Launch:**
-
-   ```bash
-   lemonclaw
-   # Fallback when running from a source checkout without installing the entry point:
-   # python main.py
-   ```
-
-3. **Talk to your agent** in the terminal, or send a POST to the webhook (`http://127.0.0.1:8765` by default). Type `/help` to see available slash commands.
-
----
-
-## ⚙️ Configuration
-
-All configuration lives in `.lemonclaw/.env` (see `.env.example` for the full list). Main sections:
-
-| Section | Purpose |
-|---------|---------|
-| `OPENAI_*` / `MODEL_*` | LLM endpoint, model, context window, temperature, timeout |
-| `BOCHA_*` | Bocha web-search API (optional — enables the search tool) |
-| `EMAIL_*` | SMTP server for the email tool (optional) |
-| `ENABLE_BASH_TOOL` / `FILE_SAFE_DIRS` | Tool safety: shell tool on/off, file-access whitelist |
-| `WEB_*` | Web/HTTP safety: private-access switch, allowlist, private writes, redirect/response-size/timeout limits |
-| `AGENT_REACT_MAX_ITERATIONS` / `CONTEXT_*` | Agent behavior: max ReAct iterations, retained message count |
-| `ENABLE_WEBHOOK` / `WEBHOOK_*` | Webhook server: host/port, auth token, rate limit |
-| `ENABLE_FEISHU` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu/Lark app credentials |
-| `FEISHU_RECEIVED_DIR` / `FEISHU_MAX_DOWNLOAD_MB` / `FEISHU_MAX_SEND_FILE_MB` / `FEISHU_PENDING_FILE_TTL_SECONDS` | Feishu files: receive directory (default `/root/workspace/received`), transfer size caps, pending-file TTL |
-| `ENABLE_MEMORY` / `MEMORY_*` | Persistent memory: context budget, recent sessions, search chunks, auto-archive |
-| `ENABLE_SKILLS` / `ENABLE_SKILL_SCRIPT` / `MAX_ACTIVE_SKILLS` / `PIP_INDEX_URL` / `NPM_REGISTRY` | Skills: master switch, script-execution gate, active-set cap, pip/npm dependency mirrors |
-| `ENABLE_MCP` / `MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` / `MCP_MAX_TOOLS` / `MCP_RESULT_MAX_CHARS` | MCP integration: master switch, connect/call timeouts, per-server tool cap, result truncation |
-| `ENABLE_WORKFLOW` / `WORKFLOW_*` | Multi-Agent Workflow: master switch, recursion limit, nesting max, node/branch limits, result truncation, worker pool size, HITL handler |
-
-Model requests use `LLM_API_TIMEOUT` per request and `LLM_TOTAL_TIMEOUT` for the whole call, including retries and fallback. `LLM_MAX_RETRIES` (default 10 retries shared by primary and fallback), `LLM_RETRY_BASE_DELAY`, and `LLM_RETRY_MAX_DELAY` control exponential backoff with jitter; rate limits respect `Retry-After`. Set `LLM_FALLBACK_MODEL` and optionally `LLM_FALLBACK_BASE_URL`/`LLM_FALLBACK_API_KEY` for a backup. Provider circuit breakers use `LLM_CIRCUIT_FAILURE_THRESHOLD` and `LLM_CIRCUIT_COOLDOWN`. Automatic retries/fallback apply to transient failures before streaming begins. A failed request retains the existing conversation checkpoint. The total deadline releases the caller; an SDK call already in progress may finish in its bounded daemon thread.
-
-
-Feishu user requests receive a `Typing` emoji reaction when accepted, followed by `DONE` after the foreground agent turn returns a nonempty reply. Errors and interrupted/empty turns remove `Typing` without adding `DONE`. System commands and bot messages are skipped; image-analysis commands participate. Standalone attachments awaiting instructions receive no processing reaction. Enable the bot permission `im:message.reactions:write_only` (add/delete message reactions). Reaction failures are logged and do not stop message handling. For background Workflows, `DONE` indicates the foreground reply has finished; Workflow results continue through the existing event mechanism.
-
-### Image input
-
-Set `ENABLE_VISION=True` (default) when the main model supports image input. Images are saved under `FEISHU_RECEIVED_DIR` and referenced from conversation checkpoints; their original bytes are encoded as Base64 Data URLs when making model requests. JPEG, PNG, GIF and WebP are validated by actual content. The application accepts up to 8 images and 20 MiB of image data per request, with a 10 MiB per-image limit. Plain text requests keep the existing behavior.
-
-```text
-/image "/path/first image.png" /path/second.jpg -- Compare these images
-/image img-<id> img-<id> -- Explain the difference
-/image all -- Describe the pending images
-/upload "/path/image.png"
-```
-
-`/image` selects images for the current turn; use `--` before the question. `/upload` stores files and returns their paths/IDs. On Feishu, sending an image saves it and returns an ID. Quote the image message and reply with a question, use `/image` with IDs, or send text and images together in a rich-text message. An ordinary follow-up text keeps the existing attachment-path behavior; pending images are selected explicitly for vision. `/upload` marks all pending images as storage-only; `/upload <id...>` marks just those images. Pending selections expire according to `FEISHU_PENDING_FILE_TTL_SECONDS`; saved history references remain usable. Image commands accept local paths only from the terminal.
-
-Set `LLM_FALLBACK_ENABLE_VISION=True` only if the backup model also supports images. Image requests require a vision-capable fallback. Turning vision off sends textual image references in place of image data. Keep referenced files available; changed, missing or over-budget images produce an explicit error. Context summarization uses the same image adapter. For Workflow `llm`/`subagent` nodes, set `config.image_ids` or `config.image_ids_field` (a list state field) to explicitly pass image IDs from the originating conversation. Image generation is a separate future capability; existing file-sending tools remain available.
-
-The existing shared main conversation is retained: terminal and Feishu requests can continue the same image conversation. Historical images use their stored attachment scope; selecting new attachments still checks the current origin. Use distinct `session_key` values when separate conversations are needed.
-
----
-
-## 📡 Channels
-
-LemonClaw receives events through pluggable input channels and broadcasts replies to every enabled output channel. All channels publish to a single message bus consumed by the agent loop. The terminal is always enabled; when Feishu is enabled, replies go to both the terminal and Feishu.
-
-Feishu final replies use Card JSON 2.0 with a Markdown body. The top title displays the received event type (`terminal`, `lark_message`, `scheduled`, `webhook`, `system`, etc.); a missing type is shown as `未知`. After a human-confirmation resume, this is the event that resumed the turn. Long replies are delivered as ordered cards, with fenced code blocks continued across parts. Sending stops on the first failed part without resending earlier parts. Menu/error output and human-confirmation forms retain their existing behavior. Card JSON 2.0 requires Feishu client 7.20 or later.
-
-
-| Channel | Direction | Notes |
-|---------|-----------|-------|
-| **Terminal** | in/out | Always on. Interactive stdin + rich terminal output. |
-| **Webhook** | in | HTTP server (default `127.0.0.1:8765`). Optional `X-Auth-Token` auth and per-minute rate limit. Enable with `ENABLE_WEBHOOK=true`. |
-| **Feishu/Lark** | in/out | Bot messaging. Requires `ENABLE_FEISHU=true` plus `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and event subscription configured in the Feishu developer console. In personal mode, the first Feishu user who messages the bot is bound automatically and persisted in `lemonclaw.db`; messages from other Feishu users are ignored, and all Feishu output goes to the bound user while the terminal always keeps outputting. Received files/images/audio/video are saved under `FEISHU_RECEIVED_DIR`; file-only messages are held until the user adds a text instruction. |
-| **Cron** | in | Scheduled tasks. Always on; tasks are managed at runtime via the `/cron` command or the cron tool. |
-
----
-
-## 🛠️ Built-in Tools
-
-| Tool | Description | Availability |
-|------|-------------|--------------|
-| `time` | Current date/time | always |
-| `http_request` | Arbitrary HTTP requests | always |
-| `web_fetch` | Fetch and extract web page content | always |
-| `read_file` / `write_file` / `edit_file` | File read / write / incremental edit | always (whitelisted dirs) |
-| `file_list_query` | List files in a directory | always (whitelisted dirs) |
-| `glob` / `grep` | File pattern match / content search | always (whitelisted dirs) |
-| `git` | Common git operations | always |
-| `sleep` | Wait for a duration | always |
-| `cron` | Create / list / delete scheduled tasks | always |
-| `bocha_search` | Web search via Bocha API | optional (needs `BOCHA_API_KEY`) |
-| `email` | Send email via SMTP | optional (needs `EMAIL_*`) |
-| `bash` | Run shell commands | optional (needs `ENABLE_BASH_TOOL=true`) |
-| `feishu_send_file` | Send a workspace file/image/audio/MP4 to the current Feishu chat | optional (needs complete Feishu config) |
-| `memory` | Read / write persistent memory | optional (needs `ENABLE_MEMORY=true`) |
-| `load_skill` / `unload_skill` | Activate / unload a skill (instructions injected by the middleware) | optional (needs `ENABLE_SKILLS=true`) |
-| `run_skill_script` | Run a skill's Python/Node script in its isolated env | optional (needs `ENABLE_SKILL_SCRIPT=true`) |
-| `mcp__<server>__<tool>` | Tools from connected MCP servers (HTTP / SSE / stdio) | optional (needs `ENABLE_MCP=true` + `.lemonclaw/mcp.json`) |
-| `workflow_define` / `workflow_execute` / `workflow_resume` / `workflow_cancel` / `workflow_list` / `workflow_inspect_run` / `workflow_delete` | Define, run, resume, manage multi-agent workflows | optional (needs `ENABLE_WORKFLOW=true`) |
-
-> Extensible: add a new tool under `agent/tools/` and register it in `create_tool_list()`.
-
-> **Web/HTTP safety boundary**: private/local targets require a full URL explicitly supplied in the user's current message, or an entry in `WEB_PRIVATE_ALLOWLIST`; URLs found in web pages, search results, or tool output do not grant access. Private targets are read-only by default, redirects are revalidated hop by hop, and external responses are marked as untrusted data.
-
----
-
-## 🧠 Memory System
-
-When `ENABLE_MEMORY=true`, LemonClaw maintains persistent memory in the single SQLite database:
-
-- **Long-term memory chunks** — facts, preferences, and knowledge stored as searchable chunks, retrieved at query time via **TF-IDF**.
-- **Session archival** — at session end, the conversation is summarized and archived so it can be recalled later.
-- **Memory tools** — use `recall_memory` for historical facts and decisions, and `list_memory` for core preferences and project context.
-- **History maintenance** — after each turn, only oversized tool text/argument strings outside the protected recent-message group are shortened (`CONTEXT_TOOL_MAX_CHARS`, default 12000 characters per string). Older history is summarized together only at 80% context pressure. At least `CONTEXT_MIN_FULL_MESSAGES` recent messages, extended to keep tool calls/results paired, remain intact.
-
-To manage memory live via the `/memory`, `/chunk`, and `/session` commands.
-
----
-
-## 🧩 Skills System
-
-When `ENABLE_SKILLS=true` (default), LemonClaw turns reusable workflows into on-demand **skill packages**. Drop a skill folder under `.lemonclaw/skills/` and the agent can discover and load it at runtime.
-
-### Skill package format (OpenClaw-compatible)
-
-```
-.lemonclaw/skills/<name>-<version>/
-├── SKILL.md         # required - YAML frontmatter (name/description/tags) + markdown instructions
-├── _meta.json       # optional - slug/version metadata
-├── requirements.txt # optional - Python deps (enables run_skill_script for this skill)
-├── package.json     # optional - Node deps
-└── *.md             # optional - extra reference docs (appended to the loaded content)
-```
-
-`SKILL.md` frontmatter example:
-
-```yaml
----
-name: weekly-report
-description: Generate a weekly work summary
-tags: [report, work]
-metadata:
-  openclaw:
-    emoji: 📊
-    requires:
-      env:
-        - BOCHA_API_KEY   # skill declares required env vars
-    primaryEnv: BOCHA_API_KEY
----
-```
-
-### How it works
-
-- **Discovery** - on startup and `/skills reload`, the skill directory is scanned and metadata is indexed in the SQLite DB.
-- **Routing** - the summary (name + description + tags) of all *available* skills is injected into the system prompt every turn, so the LLM can pick the right skill.
-- **Activation** - the agent calls `load_skill(name)` to activate a skill; its full instructions are then injected every turn by the context middleware (not stored in message history, so context compression can't lose them).
-- **LRU + unload** - at most `MAX_ACTIVE_SKILLS` (default 5) skills stay active (LRU eviction); the agent calls `unload_skill(name)` when done.
-- **Hot reload** - add/modify/delete skill packages, run `/skills reload`, and changes take effect immediately without restarting.
-
-### Sensitive parameters (API keys, etc.)
-
-Skills declare required env vars in frontmatter. Configure them **once** in `.lemonclaw/.env`; `/skills reload` picks up new keys. A skill whose required env vars are missing is marked `⚠ missing config` and hidden from the agent. Secrets never enter the LLM context - skill bodies use `${VAR}` placeholders that `http_request` resolves server-side.
-
-### Script skills (Python / Node)
-
-If a skill ships a `requirements.txt` / `package.json`, install its deps once with `/skills setup <name>` (isolated venv / `node_modules`, China-friendly mirror defaults). Run scripts via the `run_skill_script` tool (gated by `ENABLE_SKILL_SCRIPT`, off by default; path-contained, no shell, cross-platform). Node skills require `node`/`npm` preinstalled in the image.
-
----
-
-## 🔌 MCP Integration
-
-When `ENABLE_MCP=true` (default), LemonClaw uses the official **`langchain[mcp]`** integration and its FastMCP/MCP SDK client over **Streamable HTTP**, legacy **SSE**, or **stdio**. Install the updated requirements (including the `mcp` extra); upgrading plain `langchain` alone is insufficient. Each tool exposed by a connected MCP server is registered as a first-class agent tool named `mcp__<server_id>__<tool>`, so the LLM can call it directly with full parameter schemas.
-
-> LemonClaw is MCP **client only** (it consumes external tools); it does not expose itself as an MCP server.
-
-### Configure servers (`.lemonclaw/mcp.json`)
-
-Servers are declared in `.lemonclaw/mcp.json` - a JSON object keyed by `server_id` (object keys are unique by definition, and the id doubles as the tool-name prefix). Edit the file and run `/mcp reload` (or restart) - no CLI needed, which suits Docker / read-only deployments.
-
-```json
-{
-  "mindoc": {
-    "url": "https://mindoc.example.com/mcp",
-    "headers": {"Authorization": "Bearer ghs_xxxxxxxx"},
-    "auto_connect": true
-  },
-  "github": {
-    "url": "https://api.github.example/mcp",
-    "headers": {},
-    "auto_connect": true
-  }
-}
-```
-
-- `url` - the MCP endpoint; existing URL/header configurations continue to work.
-- `transport` - `http` (default), `sse`, or `stdio`. For stdio, set `command`, `args`, optional `env` and `cwd` instead of `url`. Local processes run with the LemonClaw OS user's permissions; configure them explicitly in the file.
-- `auth` - optional FastMCP authentication (`"oauth"` or a bearer token); HTTP headers remain supported. OAuth requires an accessible authorization/callback flow; a headless deployment does not automatically provide a login UI.
-- `roots` - optional list of roots supplied to the official client (legacy root-list requests). Roots describe scope to the server; they are not a filesystem sandbox.
-- `headers` - extra request headers. **Auth secrets go directly here** (see security below).
-- `auto_connect` - whether to connect on startup (default `true`).
-- `enabled` is **not** in the file - it's a DB management state toggled by `/mcp enable|disable`.
-
-A template is provided at `.lemonclaw/mcp.json.example` (placeholder values, safe to commit).
-
-### Security: secrets never reach the LLM
-
-`headers` (including tokens) are **server-side connection config** held by `MCPConnection`. They are never placed in the tool name / description / arguments / result, so they never enter the LLM context, the DB-mirrored checkpointer, or the LLM API payload. Because `mcp.json` contains secrets, it is **gitignored**; share configs via the `mcp.json.example` template. (This differs from Skills, which need `${VAR}` placeholders because skill bodies are injected into the system prompt - MCP headers are not.)
-
-### How it works
-
-- **Discovery** - the official client negotiates the protocol era and handles discovery/pagination, JSON/SSE responses, session headers and cancellation. The official LangChain adapter supplies full JSON schemas and tool metadata. Each remote tool keeps its `mcp__<id>__<tool>` registration.
-- **Calling** - one persistent adapter/client context per server preserves application sessions across tool calls. Synchronous and asynchronous agent tools share a dedicated event loop. Server errors retain `ToolMessage.status="error"`; explicit `null` and nested arguments pass through unchanged. Successful calls retain access statistics.
-- **Content** - text, images, audio, embedded resources and resource links use standard LangChain content blocks. Structured content remains in the tool artifact. MCP images are stored as scoped attachment references in checkpoints and expanded only for vision-enabled model requests. Whether a model accepts audio or files depends on the selected model/provider; no transcription is implied.
-- **Resources/prompts** - servers advertising resources, prompts or completion gain an additional `mcp__<id>__protocol` tool when tool limits leave capacity to list/read resources, list/get prompts, complete arguments, and ping. Retrieved prompts are tool data; they do not replace the system prompt.
-- **Human input** - modern `InputRequiredResult` form/URL elicitations enter the existing durable terminal/Feishu question flow. JSON form answers are validated before acceptance; cancellation/timeout resumes with `cancel`. Existing question limits apply (up to 8 questions, 1000 characters per text answer). Legacy server-initiated elicitation is not supported by the upstream interrupt adapter. Modern tools may be re-issued on graph resume: servers must ask for input before performing irreversible work.
-- **Boundaries** - this is not a claim that every optional MCP extension is enabled. Remote LLM sampling, modern roots input rounds, resource subscriptions and task-extension administration are not exposed as agent capabilities. They need explicit handlers and lifecycle/policy integration. Unsupported requests fail explicitly; they are never silently approved.
-- **Hot reload** - `/mcp reload` (or `add`/`remove`/`enable`/`disable`/`reconnect`) re-reads `mcp.json`, reconnects, and **rebuilds the agent while preserving the checkpointer** - the current conversation continues uninterrupted.
-- **Limits** - per-server `MCP_MAX_TOOLS` (default 100) and a global hard cap of 200 registered MCP tools; model-visible text truncated to `MCP_RESULT_MAX_CHARS` (default 20000); binary blocks and structured artifacts are not string-truncated. Image request limits follow the existing vision limits. A call timeout cancels the SDK request without automatically retrying a possibly completed remote operation.
-- **Resilience** - one unreachable server doesn't affect others or built-in tools; `ENABLE_MCP=false` or init failure degrades to "no MCP tools" without blocking the agent.
-
-### Manage at runtime
-
-`/mcp` commands (type `/mcp help` for the full list): `list`, `add <id> <url> [headers_json]` (writes back to `mcp.json`), `remove`, `enable`, `disable`, `tools <id>`, `reconnect`, `reload`, `call <id> <tool> [json_args]`. Command output never displays header values.
-
----
-
-## 🔀 Multi-Agent Workflow
-
-Node configs support `timeout_seconds` (default 300), `max_retries` (default 0), exponential `retry_backoff` (default 1 second), and `on_error` (`fail`, `continue`, or `compensate`). Compensation declares a `compensation` object with `tool_name` and `args`. Configure retries only for operations safe to repeat. Cancellation stops execution at node/model/tool boundaries and retains checkpoints. A timed-out blocking call may continue in its daemon thread; its result is discarded, further calls are blocked, and the timeout is reported without retry or compensation. Outstanding node calls are capped at 32; new nodes fail explicitly when that capacity is occupied.
-
-
-The main agent handles short queries directly and prefers background Workflows for multi-stage research, verification, and long tasks. Use `workflow_list_defs` to find reusable definitions; `workflow_execute` returns a run ID and follow-up events continue the interaction. Sub-agents declare `tools` and `skills`; skill bodies are included in their system prompts.
-
-Schedule a reusable definition with `create_cron_task(prompt="Daily weather report", cron_expression="0 9 * * *", workflow_id="daily_weather", workflow_input='{"city":"Shanghai"}')`. Each trigger creates an independent run using the service's local timezone. `update_cron_task` updates the binding or inputs; `workflow_id=""` restores prompt execution.
-
-
-When `ENABLE_WORKFLOW=true` (default), LemonClaw can build and run **LangGraph-based multi-agent workflows**. The architecture features **two "in-the-loop" participants**: the **main agent** and the **human**. The main agent is not just the orchestrator who defines workflows — it is an **active participant in the loop itself**: it can be called back as a node during execution (`main_agent` nodes), inspect and control in-flight runs at any time (supervisor commands), and serve as the sole interface through which humans interact with the workflow (HITL). This is fundamentally different from a simple "workflow result callback" — **the main agent is a first-class citizen of the workflow loop, not a passive endpoint**. **`loop_forever` is never modified** — workflows and the LangGraphLoop events integrate via the existing message bus and agent tools.
-
-### Key capabilities
-
-- **Main agent in the loop** vs. **Human in the loop** — two independent "loop participants":
-  - **Main agent in the loop**: the main agent is an active participant. It can be called back as a `main_agent` node during execution (with full session memory and workflow tools, enabling dynamic recursion). It can also **inspect, control, and adjust** in-flight runs **at any time** — not just at predefined callback points — via supervisor commands (`/wf inspect`, `/wf inject`) and tools (`workflow_inspect_run`, `workflow_inject`). This is the "main-agent-in-the-loop", distinct from passive result delivery.
-  - **Human in the loop**: `human` nodes pause execution and notify the user **through the main agent** (the main agent is the human's sole interface — humans never interact with sub-agents directly). The `run_id` is carried in the message text bidirectionally; the main agent extracts it and calls `workflow_resume(run_id, answer)`.
-- **Declarative specs** — define workflows via a single `workflow_define(name, description, spec)` call (JSON: `state_schema` / `nodes` / `edges` / `conditionals`). No code generation required.
-- **Sub-agents** (`subagent` nodes) — curated tools, a custom system prompt, declared skills, and a fresh conversation for each run. A `BaseSubAgent` + `GeneralSubAgent` hierarchy with a pluggable registry for future specialized types (browser, SSH, etc.).
-- **Beyond DAG** — conditional edges support LLM-based and state-field routing, plus cyclic loops (with `recursion_limit` protection).
-- **Persistent execution** — runs are checkpointed via `SqliteSaver` in the single `.lemonclaw/lemonclaw.db`. Paused runs survive process restarts and can be resumed hours/days later.
-- **Background worker pool** — workflow segments execute in a bounded thread pool (`WORKFLOW_WORKER_POOL_SIZE`, default 4) so the main agent loop never blocks.
-- **One-shot workflows** — mark `"one_shot": true` in the spec and the definition, runs, and checkpoints are auto-cleaned on completion.
-
-### Define and run in 3 steps
-
-**1. Define** — the main agent calls `workflow_define` with a JSON spec:
-
-```json
-{
-  "state_schema": [{"name": "answer", "type": "str"}, {"name": "summary", "type": "str"}],
-  "nodes": [
-    {"name": "ask", "kind": "human", "config": {"question": "Please confirm the scope.", "output_field": "answer"}},
-    {"name": "summarize", "kind": "subagent", "config": {"type": "general", "system_prompt": "You are a summarizer.", "tools": ["web_search"], "task": "Summarize: {answer}", "output_field": "summary"}}
-  ],
-  "edges": [{"src": "START", "dst": "ask"}, {"src": "ask", "dst": "summarize"}, {"src": "summarize", "dst": "END"}]
-}
-```
-
-**2. Execute** — the main agent calls `workflow_execute("workflow_id")`. The workflow runs in a background worker thread; on a `human` node it pauses and sends a `LangGraphLoop` message to the main agent (via the normal message bus — no special dispatch).
-
-**3. Resume (HITL)** — the user replies with the `run_id` in the text (e.g. `wf_run_xxx agreed, limit to one week`). The main agent extracts the `run_id` and calls `workflow_resume(run_id, answer)` to continue.
-
-### Manage at runtime
-
-`/wf` commands (type `/wf help` for the full list): `list`, `runs [status]` (active/running/paused/all), `resume <id> <value>`, `cancel <id>`, `delete <id>`. The main agent also has `workflow_list` (list active/paused runs), `workflow_inspect_run`, and `workflow_inject` tools.
-
-> `python` nodes and the sandbox mechanism are **not implemented** in this release; they will be added later under a shared sandbox with the skill script system.
-
----
-
-## 💬 Slash Commands
-
-Available inside any conversation (type `/help` for the full list):
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/tokens` | Show cumulative token usage |
-| `/clear` | Clear the current conversation |
-| `/session` / `/session show <id>` | List recent sessions / view a session's history |
-| `/resume [id]` | Resume a session in place |
-| `/chunk` | Manage long-term memory chunks (list/add/get/delete/search) |
-| `/memory` | Manage core memory (set/get/delete/list) |
-| `/cron` | List and manage scheduled tasks (`/cron help` for subcommands) |
-| `/skills` | List and manage skills (`/skills help` for subcommands: list/show/enable/disable/unload/setup/reload) |
-| `/mcp` | List and manage MCP servers (`/mcp help` for subcommands: list/add/remove/enable/disable/tools/reconnect/reload/call) |
-| `/wf` | List and manage workflows (`/wf help` for subcommands: list/runs/resume/cancel/delete) |
-| `/exit` `/quit` `/q` | Exit |
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read [AGENTS.md](AGENTS.md) first — it documents the project structure and the constraints (e.g. the single-SQLite-DB rule) that any change must respect.
-
-1. Fork the repo and create a feature branch.
-2. Keep the existing code style and architecture intact.
-3. Add tests under `tests/` where applicable.
-4. Open a pull request describing the change.
-
----
-
-## 📄 License
-
-Licensed under the [Apache License 2.0](LICENSE). Copyright © 2026 LemonClaw Contributors.
-
-### Key updates and silent completion
-
-The main agent normally sends a final reply. `notify_progress(message, kind)` sends necessary milestones, blockers, or a complete result through the current output channel, with duplicate suppression and a limit of three notifications of up to 2000 characters per turn.
-
-`finish_silently(reason, outcome)` must be called alone. `no_action_needed` is allowed for background webhook, system, Workflow completion, and custom events; user messages and scheduled tasks require a reply. `already_delivered` requires a successful `notify_progress(kind="delivered_result")` in this turn. Progress alone does not qualify. Rejected requests return to the model. Successful requests save the tool result before ending the graph and still complete Typing → DONE. Both tools are restricted to the main agent. Prompts require reports, errors, and questions to be delivered; the model remains responsible for deciding whether a background event actually needs attention.
-
-### Ask the user a critical question (main agent only)
-
-`ask_user_question(reason, questions, timeout_seconds=3600)` persists a LangGraph interrupt and releases the main loop. Each question has `prompt`, `kind` (`single`, `multiple`, `text`), and `options` for choices. Up to 8 questions and 12 choices per question are supported. Call this tool alone, only for decisions that need user input. Workflow human nodes can be relayed by the main agent; only a confirmed answer should resume the Workflow.
-
-Timeouts must be **1200–86400 seconds**. Confirmation returns `status=confirmed`, `action=continue`, and actual answer values. Cancellation returns `status=cancelled`; expiration returns `status=timeout`; both use `action=cancel`, empty answers, and end the main turn without another model call. The Workflow itself remains paused.
-
-Terminal input: `1` for a single choice, `1,2` for multiple choices, `0:Other actual answer` for an alternative, and `1:Name,2:Age` for multiple text fields. Whitespace around fields is ignored. Multiple choice questions can use `1:1,3,2:2`. A comma followed by a question number and colon starts the next field. Option zero is exclusive and requires text.
-
-Feishu uses native Card 2.0 dropdowns, text inputs, and a form with confirm/cancel controls. Cancel is outside the form so missing required fields cannot block it. Enable **`card.action.trigger`** in the app's callback configuration; callbacks use the existing WebSocket connection. Answers are restricted to the original user, channel, card message, and random credential. Stale or repeated submissions cannot resume twice. No bridge callback tokens are involved: LemonClaw's own bot SDK handles these callbacks.
-
-Use `/question` in the original channel to resend the question without resetting its deadline, `/cancel` to cancel, or `/clear` to clear the session and invalidate old questions. Waiting state and deadlines survive restart; offline time counts toward the timeout. The main loop checks results and deadlines once per second while idle, or at its next scheduling opportunity after other work. Feishu Typing stays on the original request while waiting and becomes DONE on completion, cancellation, or timeout. Question display is restricted to its channel; ordinary output routing is unchanged.
-
-An interrupted turn is resumed from its persisted checkpoint on the next input. A continuation command such as `继续` only resumes the pending turn; other input is processed after recovery. An interrupted tool may run again when the graph is replayed, so externally visible writes should be idempotent. Tests use local fake providers and SDK callbacks; real tenant rendering and callback configuration require manual verification.
-
-A human-confirmation interrupt is control flow, not a tool error. The original tool call remains pending while waiting. The internal wake-up only invokes `Command(resume=...)`, without adding a new user message. Confirmation, cancellation, and timeout complete the original tool-call ID; actual tool failures are still reported.
-
-### Feishu CLI in Bash
-
-The Docker image includes Node.js 24, npm, and `@larksuite/cli` 1.0.100
-(overridable with the `NODE_IMAGE` and `LARK_CLI_VERSION` build arguments).
-With `ENABLE_BASH_TOOL=true` and the existing `FEISHU_APP_ID` /
-`FEISHU_APP_SECRET` configured, Bash child processes receive the CLI app
-credentials, the `feishu` brand, and a short-lived tenant access token.
-The Feishu SDK caches and renews this token; each Bash invocation obtains the
-current value. Existing long-running commands need to be invoked again after
-their token expires. Credential initialization failures stop that Bash invocation.
-No credentials are stored in the image. Bash can read its environment, so only
-trusted tasks should have access. Plaintext CLI secrets are redacted from tool
-output, which does not prevent commands from reading or transforming them.
-User OAuth is outside this integration; app credentials do not grant user identity.
-An existing `LARK_CHANNEL` bridge binding is preserved without overriding its profile.
+[Apache License 2.0](LICENSE). Copyright © 2026 LemonClaw Contributors.

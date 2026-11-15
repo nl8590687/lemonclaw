@@ -228,3 +228,6 @@ workspace/
 # SQLite WAL/SHM sidecar files
 *.db-wal
 *.db-shm
+
+# Generated documentation site
+/site/

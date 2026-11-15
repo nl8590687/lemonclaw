@@ -1,0 +1,66 @@
+site_name: LemonClaw
+site_description: Self-hosted AI digital employee / 可自行部署的 AI 数字员工
+site_url: https://nl8590687.github.io/lemonclaw/
+repo_url: https://github.com/nl8590687/lemonclaw
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+exclude_docs: 'README.md
+
+  '
+theme:
+  name: mkdocs
+plugins:
+- search
+markdown_extensions:
+- tables
+- fenced_code
+- toc
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    anchors: warn
+nav:
+- Home / 首页: index.md
+- 简体中文:
+  - LemonClaw 文档: zh/index.md
+  - 快速开始: zh/getting-started.md
+  - 部署与运行: zh/deployment.md
+  - ⚙️ 配置: zh/configuration.md
+  - 📡 通道: zh/channels.md
+  - 图片输入: zh/images.md
+  - 🛠️ 内置工具: zh/tools.md
+  - 🧩 技能系统: zh/skills.md
+  - MCP 接入: zh/mcp.md
+  - 🧠 记忆系统: zh/memory.md
+  - 🔀 多 Agent 工作流: zh/workflows.md
+  - 通知与人工确认: zh/interaction.md
+  - 💬 斜杠命令: zh/commands.md
+  - Bash 中使用飞书 CLI: zh/feishu-cli.md
+  - 运维与备份: zh/operations.md
+  - 常见问题与排障: zh/troubleshooting.md
+  - 贡献指南: zh/contributing.md
+  - 🏗️ 架构: zh/architecture.md
+- English:
+  - LemonClaw documentation: en/index.md
+  - Quick start: en/getting-started.md
+  - Deployment: en/deployment.md
+  - ⚙️ Configuration: en/configuration.md
+  - 📡 Channels: en/channels.md
+  - Image input: en/images.md
+  - 🛠️ Built-in Tools: en/tools.md
+  - 🧩 Skills System: en/skills.md
+  - MCP integration: en/mcp.md
+  - 🧠 Memory System: en/memory.md
+  - 🔀 Multi-Agent Workflow: en/workflows.md
+  - Notifications and human confirmation: en/interaction.md
+  - 💬 Slash Commands: en/commands.md
+  - Feishu CLI in Bash: en/feishu-cli.md
+  - Operations and backups: en/operations.md
+  - Troubleshooting: en/troubleshooting.md
+  - Contributing: en/contributing.md
+  - 🏗️ Architecture: en/architecture.md
