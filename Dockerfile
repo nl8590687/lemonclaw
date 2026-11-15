@@ -1,10 +1,17 @@
+ARG NODE_IMAGE=node:24-bookworm-slim
+FROM ${NODE_IMAGE} AS node_runtime
+
 FROM ubuntu:26.04
 ARG PYTHON_VERSION=3.14
+ARG LARK_CLI_VERSION=1.0.100
+
+# 复用官方 Node.js 24 镜像中的 node/npm；Ubuntu 保留现有 Python 运行环境。
+COPY --from=node_runtime /usr/local/ /usr/local/
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 系统依赖 + uv（uv 只在构建期装依赖时使用）
-RUN apt-get update && apt install -y --no-install-recommends ca-certificates curl tzdata language-pack-zh-hans \
+RUN apt-get update && apt install -y --no-install-recommends ca-certificates curl tzdata language-pack-zh-hans libstdc++6 \
     && curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh \
     && sh /tmp/uv-install.sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
@@ -12,6 +19,12 @@ RUN apt-get update && apt install -y --no-install-recommends ca-certificates cur
     && echo -e "\nzh_CN.UTF-8 UTF-8\n" >> /etc/locale.gen \
     && echo -e "\nexport LANG=zh_CN.UTF-8\nexport LANGUAGE=zh_CN:zh" >> /etc/profile \
     && rm -rf /var/lib/apt/lists/* /tmp/uv-install.sh
+
+# 仅安装工具，不写入应用凭证或发起登录；构建时失败即停止。
+RUN node -e 'if (Number(process.versions.node.split(".")[0]) < 24) process.exit(1)' \
+    && CI=1 npm install --global --no-audit --no-fund "@larksuite/cli@${LARK_CLI_VERSION}" \
+    && node --version && npm --version && lark-cli --version \
+    && npm cache clean --force
 
 # 在项目目录下创建 uv 默认使用的那份 venv（/app/.venv），依赖全部在构建期装好
 WORKDIR /app
