@@ -76,6 +76,14 @@ def format_attachment_log(attachments: list[dict[str, object]]) -> str:
 
 def loop_forever():
     svr = AgentService()
+    from channels.webui import state as web_state
+    from dao.webui import WebStore
+    from config import runtime
+    web_state.service = svr
+    svr._web_config_revision = runtime.revision
+    from channels.webui.reload import channel_snapshot
+    svr._web_channels = channel_snapshot()
+    web_state.recover_requests()
     msg_bus = get_bus()
     while True:
         out_chan = svr.default_out_chan
@@ -83,7 +91,12 @@ def loop_forever():
         reaction_completed = False
         reaction_waiting = False
         question_origin = None
+        request_claimed = False
         try:
+            if getattr(svr, '_web_config_revision', runtime.revision) != runtime.revision:
+                from channels.webui.reload import refresh_agent
+                refresh_agent(svr)
+                svr._web_config_revision = runtime.revision
             store = getattr(svr, 'questions', None)
             ready = store.ready() if isinstance(store, QuestionDAO) else []
             if ready:
@@ -94,6 +107,8 @@ def loop_forever():
                                          content={'text': '[人工确认结果]'}, priority=EventPriority.HIGH)
             else:
                 event_msg: EventMessage = msg_bus.poll(timeout=1)
+            from channels.device.feishu import sync_pending_owner_questions
+            sync_pending_owner_questions()
             if not event_msg:
                 continue
             from channels.device.feishu import reaction_eligible, turn_completed
@@ -120,6 +135,17 @@ def loop_forever():
             if not msg_text.strip() and not attachments:
                 continue
 
+            request_id = event_msg.context.get('request_id')
+            if request_id:
+                request_claimed = WebStore().claim(request_id, resume=bool(event_msg.context.get('_question_ready_id')))
+                if not request_claimed:
+                    continue
+            if getattr(web_state, 'enabled', False):
+                with web_state.mutation_lock:
+                    web_state.busy.set()
+                if not event_msg.context.get('_question_ready_id'):
+                    web_state.emit('input', dict(content=msg_text, source=event_msg.context.get('source', event_msg.event_type.value)))
+                rid = event_msg.context.get('request_id')
             event_msg.context["_event_type"] = event_msg.event_type.value
             out_chan = get_output_channel(event_msg)
             is_terminal_event = event_msg.event_type.value == EventType.TERMINAL.value
@@ -143,6 +169,7 @@ def loop_forever():
             elif msg_text.strip().startswith("/"):
                 if not handle_command(out_chan, agent_service=svr, command=msg_text) and is_terminal_event:
                     break
+                reaction_completed = True
             else:
                 context = event_msg.context
                 result = svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
@@ -155,6 +182,13 @@ def loop_forever():
         except Exception as ex:
             out_chan.write_system_error(f"error: {ex}")
         finally:
+            if 'event_msg' in locals() and event_msg and request_claimed:
+                rid = event_msg.context.get('request_id')
+                if rid:
+                    WebStore().request(rid, 'waiting_human' if reaction_waiting else 'completed' if reaction_completed else 'failed')
+            if getattr(web_state, 'enabled', False) and 'event_msg' in locals() and event_msg:
+                web_state.emit('refresh', dict(busy=False))
+            web_state.busy.clear()
             from channels.device.feishu import finish_live_reaction
             if reaction_context is not None and (not reaction_waiting or
                     reaction_context.get('message_id') != (question_origin or {}).get('message_id')):
@@ -162,6 +196,8 @@ def loop_forever():
             if question_origin and not reaction_waiting and question_origin.get('message_id') != (reaction_context or {}).get('message_id'):
                 finish_live_reaction(question_origin, reaction_completed)
 
+    from channels.webui.server import stop
+    stop()
     stop_event_source()
     # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）
     if svr.memory:

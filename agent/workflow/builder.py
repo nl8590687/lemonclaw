@@ -90,7 +90,7 @@ class WorkflowBuilder:
         for ed in edges_spec:
             src = ed.get("src", "")
             dst = ed.get("dst", "")
-            src = START if src == "START" else src
+            src = [START if item == "START" else item for item in src] if isinstance(src, list) else START if src == "START" else src
             dst = END if dst == "END" else dst
             g.add_edge(src, dst)
 

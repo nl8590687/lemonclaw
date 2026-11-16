@@ -36,6 +36,10 @@ def build_output_channels(context: dict[str, object] | None = None) -> list[Base
         channels.append(
             FeishuOutputChannel(open_id if isinstance(open_id, str) and open_id else None)
         )
+    from channels.webui import state
+    if getattr(state, "enabled", False):
+        from channels.out.webui import WebUIOutputChannel
+        channels.append(WebUIOutputChannel())
     return channels
 
 

@@ -76,6 +76,7 @@ Ask “Hello, what can you do?” in the terminal. A reply verifies basic connec
 | Install, deploy, or troubleshoot | [Quick start](docs/en/getting-started.md), [deployment](docs/en/deployment.md), [troubleshooting](docs/en/troubleshooting.md) |
 | Connect Feishu, use images or CLI | [Channels](docs/en/channels.md), [images](docs/en/images.md), [Feishu CLI](docs/en/feishu-cli.md) |
 | Configure models and tools | [Configuration](docs/en/configuration.md), [tools](docs/en/tools.md) |
+| Browser interface | [WebUI setup and management](docs/en/webui.md) |
 | Extend and automate | [Skills](docs/en/skills.md), [MCP](docs/en/mcp.md), [workflows](docs/en/workflows.md) |
 | Manage conversations and tasks | [Memory](docs/en/memory.md), [commands](docs/en/commands.md), [human confirmation](docs/en/interaction.md) |
 | Contribute code | [Contributing](docs/en/contributing.md), [architecture](docs/en/architecture.md) |

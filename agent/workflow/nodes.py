@@ -28,6 +28,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
+from langgraph.errors import GraphBubbleUp
 
 from agent.workflow.state import render_template
 from agent.workflow.control import check_control
@@ -89,9 +90,14 @@ def _llm_node(nc: dict, llm):
 
 def _tool_node(nc: dict, tools: dict):
     """调用 tools[tool_name]，参数来自 nc.args 模板 + state，写入 output_field。"""
+    from config import runtime
+    built_revision = runtime.revision
     def fn(state, config=None):
         tool_name = nc.get("tool_name", "")
         tool = tools.get(tool_name)
+        if built_revision != runtime.revision:
+            from agent.tools import create_tool_list
+            tool = next((item for item in create_tool_list() if item.name == tool_name), None)
         if tool is None:
             return {_output_field(nc, "output"): f"❌ 工具不存在: {tool_name}"}
         args = nc.get("args", {})
@@ -174,19 +180,17 @@ def _human_node(nc: dict):
 
 def _subgraph_node(nc: dict, manager):
     """嵌套另一工作流作为子图（编译期静态嵌套）。子图共享同名 state key。"""
+    sub_workflow_id = nc.get("sub_workflow_id", "")
+    sub_graph = manager._get_graph_by_id(sub_workflow_id)
     def fn(state, config=None):
-        sub_workflow_id = nc.get("sub_workflow_id", "")
         try:
-            sub_graph = manager._get_graph_by_id(sub_workflow_id)
             if sub_graph is None:
-                return {_output_field(nc, "output"): f"❌ 子工作流不存在: {sub_workflow_id}"}
-            import uuid
-            sub_thread = f"sub_{uuid.uuid4().hex[:8]}"
-            result = sub_graph.invoke(
-                dict(state),
-                config={"configurable": {"thread_id": sub_thread}},
-            )
+                raise ValueError(f"子工作流不存在: {sub_workflow_id}")
+            # Forward LangGraph's checkpoint namespace for nested interrupt/resume.
+            result = sub_graph.invoke(dict(state), config=config)
             return {k: v for k, v in result.items() if k in (state or {})}
+        except GraphBubbleUp:
+            raise
         except Exception as ex:
             if any(k in nc for k in ("max_retries", "on_error", "timeout_seconds")):
                 raise

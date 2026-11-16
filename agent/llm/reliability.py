@@ -170,9 +170,15 @@ class ReliableChatOpenAI(ChatOpenAI):
     total_timeout: float = Field(default=180, gt=0, allow_inf_nan=False)
     breaker_threshold: int = Field(default=3, ge=1)
     breaker_cooldown: float = Field(default=30, ge=0, allow_inf_nan=False)
+    _runtime_revision: int = PrivateAttr(default=-1)
     _fallback: ChatOpenAI | None = PrivateAttr(default=None)
 
     def _attempts(self, messages, stop, streaming, **kwargs):
+        from config import runtime
+        if self._runtime_revision >= 0 and self._runtime_revision != runtime.revision:
+            from agent.llm.openai import create_openai_llm
+            yield from create_openai_llm()._attempts(messages, stop, streaming, **kwargs)
+            return
         from agent.media.images import adapt_messages
         messages, has_images = adapt_messages(messages, self.vision_enabled)
         deadline = time.monotonic() + self.total_timeout

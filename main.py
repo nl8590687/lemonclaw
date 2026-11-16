@@ -45,6 +45,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     from loop import loop_forever, start_event_source
 
     get_global_config()
+    from channels.webui.server import start
+    start()
     start_event_source()
     loop_forever()
 

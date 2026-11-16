@@ -23,7 +23,7 @@ import atexit
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 import logging
-from threading import Thread, current_thread
+from threading import Thread, current_thread, Lock, Event
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -61,6 +61,11 @@ class MCPConnection:
         self.status, self.last_error = "disconnected", None
         self._loop = self._thread = self._stop = self.adapter = self._owner = None
         self._ready = Future()
+        self._calls_lock = Lock()
+        self._active_calls = 0
+        self._retiring = False
+        self._idle = Event()
+        self._idle.set()
 
     def _transport(self):
         from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
@@ -124,6 +129,7 @@ class MCPConnection:
     def connect(self):
         if self._thread and self._thread.is_alive():
             self.disconnect()
+        self._retiring = False
         self.status, self.last_error = "connecting", None
         self._ready = Future()
         self._thread = Thread(target=self._worker, name=f"mcp-{self.server_id}", daemon=True)
@@ -155,18 +161,39 @@ class MCPConnection:
         self.status = "disconnected"
         self.native_tools = {}
 
+    def retire(self):
+        """Remove this generation from service without interrupting an active call."""
+        with self._calls_lock:
+            self._retiring = True
+            active = self._active_calls
+        if not active:
+            self.disconnect()
+            return
+        def finish():
+            self._idle.wait()
+            self.disconnect()
+        Thread(target=finish, daemon=True, name=f"mcp-retire-{self.server_id}").start()
+
     def _submit(self, coroutine, timeout=None):
-        if not self._loop or not self._loop.is_running() or not self.adapter:
-            coroutine.close()
-            raise RuntimeError(f"MCP 服务 {self.server_id} 未连接")
-        # run_coroutine_threadsafe carries the caller's contextvars, including
-        # LangGraph's interrupt/resume context and per-turn provenance.
-        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        with self._calls_lock:
+            if self._retiring or not self._loop or not self._loop.is_running() or not self.adapter:
+                coroutine.close()
+                raise RuntimeError(f"MCP 服务 {self.server_id} 未连接")
+            self._active_calls += 1
+            self._idle.clear()
         try:
-            return future.result(timeout=timeout or self.call_timeout)
-        except FutureTimeout:
-            future.cancel()  # propagate cancellation to the official client/server
-            raise TimeoutError(f"MCP 调用超过 {timeout or self.call_timeout} 秒；远端操作是否完成需核实") from None
+            # Preserve contextvars and the deadline captured for this invocation.
+            future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            try:
+                return future.result(timeout=timeout or self.call_timeout)
+            except FutureTimeout:
+                future.cancel()
+                raise TimeoutError(f"MCP 调用超过 {timeout or self.call_timeout} 秒；远端操作是否完成需核实") from None
+        finally:
+            with self._calls_lock:
+                self._active_calls -= 1
+                if not self._active_calls:
+                    self._idle.set()
 
     async def _refresh_tools(self):
         native = await self.adapter.list_tools(cache_mode="refresh")

@@ -385,3 +385,67 @@ def test_protocol_helpers_do_not_displace_existing_tools_at_cap(server_count):
     assert len(tools) == 100 * server_count
     assert sum(tool.name.startswith('mcp__first__') for tool in tools) == 100
     assert sum(tool.name.startswith('mcp__second__') for tool in tools) == 100 * (server_count - 1)
+
+
+def test_retire_connection_preserves_inflight_call():
+    import threading
+    import time
+    server = FastMCP('retirement')
+    entered, release = threading.Event(), threading.Event()
+    @server.tool
+    async def wait_for_release():
+        entered.set()
+        await asyncio.to_thread(release.wait, 5)
+        return 'completed'
+    conn = MCPConnection('retire', '', {}, 15, 15, 20000, target=server)
+    assert conn.connect()[0]
+    results=[]
+    worker=threading.Thread(target=lambda:results.append(conn.call_tool('wait_for_release',{})))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        conn.retire()
+        assert conn._thread.is_alive()
+        assert conn.call_tool('wait_for_release',{}).startswith('❌')
+        release.set()
+        worker.join(5)
+        assert len(results)==1 and 'completed' in results[0] and not results[0].startswith('❌')
+        deadline=time.monotonic()+5
+        while conn._thread.is_alive() and time.monotonic()<deadline:
+            time.sleep(.05)
+        assert not conn._thread.is_alive()
+    finally:
+        release.set()
+        worker.join(5)
+        conn.disconnect()
+
+
+def test_reconfiguration_keeps_old_generation_until_new_connection_ready():
+    import threading
+    from unittest.mock import MagicMock
+    from agent.mcp.manager import MCPManager
+    entered, release = threading.Event(), threading.Event()
+    old = MagicMock(status='connected')
+    new = MagicMock(status='connected', tools=[], protocol_version='test', server_info={})
+    def negotiate():
+        entered.set()
+        assert release.wait(5)
+        return True, ''
+    new.connect.side_effect = negotiate
+    manager = object.__new__(MCPManager)
+    manager.dao = MagicMock()
+    manager._connections = {'server':old}
+    manager._build_connection = lambda server:new
+    worker=threading.Thread(target=manager.connect,args=('server',))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert manager._connections['server'] is old
+        old.retire.assert_not_called()
+        release.set()
+        worker.join(5)
+        assert manager._connections['server'] is new
+        old.retire.assert_called_once()
+    finally:
+        release.set()
+        worker.join(5)

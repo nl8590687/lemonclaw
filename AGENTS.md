@@ -15,6 +15,7 @@ LemonClaw is an open-source, universal AI digital employee agent.
 |- dao/           数据库model和dao操作模块
 |- config/        配置相关代码模块
 |- docs/          中英文用户、运维和贡献者文档（zh/、en/）
+|- webui/        Vue 3 + TypeScript 前端；dist/ 为构建产物，禁止提交
 |- tests/         单元测试目录
 |- loop.py        Agent Loop核心代码
 |- main.py        启动入口代码
@@ -40,3 +41,7 @@ LemonClaw is an open-source, universal AI digital employee agent.
 7. 文档改动检查相对链接、图片路径、导航、中英文对应关系及代码示例；站点配置存在时执行相应构建检查。纯排版或文档迁移无需重复运行完整业务测试；文档不得为通过链接检查而指向不存在的目标。
 
 8. 本仓库文档站采用 MkDocs：入口为 `docs/index.md`，导航及项目路径在根目录 `mkdocs.yml` 中配置，依赖为 `docs/requirements.txt`。文档内部链接保持相对 `.md` 地址；指向 `docs/` 外的源码/配置使用 GitHub 链接，避免生成站点后失效。改动必须通过 `python -m mkdocs build --strict`；工作流 `.github/workflows/docs.yml` 对 PR 只构建，对 main 发布。Pages 设置必须选择 GitHub Actions；不得把原始 Markdown 目录当作已经生成的 HTML 网站发布。
+
+## WebUI 维护约束
+
+WebUI 复用唯一主 Agent、现有管理器及 SQLite；前端不得另造会话或执行引擎。前端改动执行 `cd webui && npm ci && npm run build`，本地运行顺序为构建后再 `python main.py`。静态目录缺失仅关闭 WebUI。配置管理写应用 `.lemonclaw/.env`，未知变量保留，敏感值脱敏；不得改成 Docker 参数配置或强制重启进程。界面文案放入 i18n，至少同步中英文。

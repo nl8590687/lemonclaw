@@ -94,7 +94,7 @@ def create_mcp_tools(manager):
     return manager.get_langchain_tools() if manager else []
 
 
-def create_protocol_tool(connection, tool_name):
+def create_protocol_tool(connection, tool_name, manager=None):
     """Expose resources/prompts using the same scoped multimodal result path."""
     import json
     from types import SimpleNamespace
@@ -102,7 +102,10 @@ def create_protocol_tool(connection, tool_name):
 
     def invoke(server_id, operation_name, arguments, call_id, _lc_config):
         operation = arguments['operation']
-        result = connection.protocol(operation, arguments.get('arguments'))
+        current = manager._connections.get(server_id) if manager else connection
+        if current is None:
+            raise RuntimeError('MCP service is disconnected')
+        result = current.protocol(operation, arguments.get('arguments'))
         if operation == 'read_resource':
             raw = SimpleNamespace(content=[EmbeddedResource(type='resource', resource=item) for item in result],
                                   structured_content=None, is_error=False)

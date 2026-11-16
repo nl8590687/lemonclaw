@@ -32,6 +32,16 @@ class QuestionSpec(BaseModel):
 
 
 def actor_matches(row, context):
+    from channels.webui import state
+    if getattr(state, 'enabled', False) or row.get('origin', {}).get('source') == 'webui':
+        if context.get('source') == 'webui' and context.get('_webui_owner') is True and context.get('_event_type') == 'webui':
+            return True
+        if (context.get('source') or 'terminal') == 'terminal' and context.get('_event_type') in {None, '', 'terminal'}:
+            return True
+        if context.get('source') == 'feishu':
+            from channels.device.feishu import get_feishu_owner_open_id
+            if context.get('sender_type') == 'user' and context.get('open_id') == get_feishu_owner_open_id():
+                return True
     origin = row['origin']
     source = context.get('source') or 'terminal'
     expected = origin.get('source') or 'terminal'

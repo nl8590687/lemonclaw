@@ -50,99 +50,105 @@ class GlobalConfig(BaseSettings):
     """
     全局配置
     """
-    OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "")
-    OPENAI_API_KEY: SecretStr = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
-    ENABLE_VISION: bool = str(os.environ.get("ENABLE_VISION", "true")).lower() == "true"
-    LLM_FALLBACK_ENABLE_VISION: bool = str(os.environ.get("LLM_FALLBACK_ENABLE_VISION", "false")).lower() == "true"
-    MODEL_NAME: str = os.environ.get("MODEL_NAME", "")
-    MODEL_CONTEXT_LENGTH: int = int(os.environ.get("MODEL_CONTEXT_LENGTH", 128000))
-    MODEL_MAX_COMPLETION_TOKEN: int = int(os.environ.get("MODEL_MAX_COMPLETION_TOKEN", 128000))
-    TEMPERATURE: float = float(os.environ.get("TEMPERATURE", 0.7))
-    LLM_API_TIMEOUT: int = int(os.environ.get("LLM_API_TIMEOUT", 60))
-    LLM_MAX_RETRIES: int = int(os.environ.get("LLM_MAX_RETRIES", 10))
-    LLM_RETRY_BASE_DELAY: float = float(os.environ.get("LLM_RETRY_BASE_DELAY", 1))
-    LLM_RETRY_MAX_DELAY: float = float(os.environ.get("LLM_RETRY_MAX_DELAY", 30))
-    LLM_TOTAL_TIMEOUT: float = float(os.environ.get("LLM_TOTAL_TIMEOUT", 180))
-    LLM_CIRCUIT_FAILURE_THRESHOLD: int = int(os.environ.get("LLM_CIRCUIT_FAILURE_THRESHOLD", 3))
-    LLM_CIRCUIT_COOLDOWN: float = float(os.environ.get("LLM_CIRCUIT_COOLDOWN", 30))
-    LLM_FALLBACK_MODEL: str = os.environ.get("LLM_FALLBACK_MODEL", "")
-    LLM_FALLBACK_BASE_URL: str = os.environ.get("LLM_FALLBACK_BASE_URL", "")
-    LLM_FALLBACK_API_KEY: SecretStr = SecretStr(os.environ.get("LLM_FALLBACK_API_KEY", ""))
+    OPENAI_BASE_URL: str = ''
+    OPENAI_API_KEY: SecretStr = SecretStr('')
+    ENABLE_VISION: bool = str('true').lower() == 'true'
+    LLM_FALLBACK_ENABLE_VISION: bool = str('false').lower() == 'true'
+    MODEL_NAME: str = ''
+    MODEL_CONTEXT_LENGTH: int = int(128000)
+    MODEL_MAX_COMPLETION_TOKEN: int = int(128000)
+    TEMPERATURE: float = float(0.7)
+    LLM_API_TIMEOUT: int = int(60)
+    LLM_MAX_RETRIES: int = int(10)
+    LLM_RETRY_BASE_DELAY: float = float(1)
+    LLM_RETRY_MAX_DELAY: float = float(30)
+    LLM_TOTAL_TIMEOUT: float = float(180)
+    LLM_CIRCUIT_FAILURE_THRESHOLD: int = int(3)
+    LLM_CIRCUIT_COOLDOWN: float = float(30)
+    LLM_FALLBACK_MODEL: str = ''
+    LLM_FALLBACK_BASE_URL: str = ''
+    LLM_FALLBACK_API_KEY: SecretStr = SecretStr('')
 
     # Web/HTTP 安全：私网/本地目标需当前用户 URL 授权或进入信任列表
-    WEB_ACCESS_ALLOW_PRIVATE: bool = str(os.environ.get("WEB_ACCESS_ALLOW_PRIVATE", "true")).lower() == "true"
-    WEB_PRIVATE_ALLOWLIST: str = str(os.environ.get("WEB_PRIVATE_ALLOWLIST", ""))
-    WEB_ALLOW_PRIVATE_WRITES: bool = str(os.environ.get("WEB_ALLOW_PRIVATE_WRITES", "false")).lower() == "true"
-    WEB_MAX_REDIRECTS: int = int(os.environ.get("WEB_MAX_REDIRECTS", 5))
-    WEB_MAX_RESPONSE_BYTES: int = int(os.environ.get("WEB_MAX_RESPONSE_BYTES", 2000000))
-    WEB_REQUEST_TIMEOUT: int = int(os.environ.get("WEB_REQUEST_TIMEOUT", 60))
+    WEB_ACCESS_ALLOW_PRIVATE: bool = str('true').lower() == 'true'
+    WEB_PRIVATE_ALLOWLIST: str = str('')
+    WEB_ALLOW_PRIVATE_WRITES: bool = str('false').lower() == 'true'
+    WEB_MAX_REDIRECTS: int = int(5)
+    WEB_MAX_RESPONSE_BYTES: int = int(2000000)
+    WEB_REQUEST_TIMEOUT: int = int(60)
 
-    BOCHA_API_URL: str|None = os.environ.get("BOCHA_API_URL")
-    BOCHA_API_KEY: str|None = os.environ.get("BOCHA_API_KEY")
+    BOCHA_API_URL: str|None = None
+    BOCHA_API_KEY: str|None = None
 
-    EMAIL_SMTP_SERVER: str|None = os.environ.get("EMAIL_SMTP_SERVER")
-    EMAIL_SMTP_ENCRYPTION: str|None = os.environ.get("EMAIL_SMTP_ENCRYPTION", "SSL")
-    EMAIL_SMTP_PORT: int = int(os.environ.get("EMAIL_SMTP_PORT", 465))
-    EMAIL_SMTP_USERNAME: str|None = os.environ.get("EMAIL_SMTP_USERNAME")
-    EMAIL_SMTP_PASSWORD: str|None = os.environ.get("EMAIL_SMTP_PASSWORD")
-    EMAIL_FROM_NAME: str|None = os.environ.get("EMAIL_FROM_NAME", "LemonClaw")
+    EMAIL_SMTP_SERVER: str|None = None
+    EMAIL_SMTP_ENCRYPTION: str|None = 'SSL'
+    EMAIL_SMTP_PORT: int = int(465)
+    EMAIL_SMTP_USERNAME: str|None = None
+    EMAIL_SMTP_PASSWORD: str|None = None
+    EMAIL_FROM_NAME: str|None = 'LemonClaw'
 
-    ENABLE_BASH_TOOL: bool = str(os.environ.get("ENABLE_BASH_TOOL", "false")).lower() == "true"
-    FILE_SAFE_DIRS: str = str(os.environ.get("FILE_SAFE_DIRS", ""))
+    ENABLE_BASH_TOOL: bool = str('false').lower() == 'true'
+    FILE_SAFE_DIRS: str = str('')
 
-    AGENT_REACT_MAX_ITERATIONS: int = int(os.environ.get("AGENT_REACT_MAX_ITERATIONS", 20))
-    CONTEXT_TOOL_MAX_CHARS: int = int(os.environ.get("CONTEXT_TOOL_MAX_CHARS", 12000))
-    CONTEXT_MIN_FULL_MESSAGES: int = int(os.environ.get("CONTEXT_MIN_FULL_MESSAGES", 20))
+    AGENT_REACT_MAX_ITERATIONS: int = int(20)
+    CONTEXT_TOOL_MAX_CHARS: int = int(12000)
+    CONTEXT_MIN_FULL_MESSAGES: int = int(20)
 
-    ENABLE_WEBHOOK: bool = str(os.environ.get("ENABLE_WEBHOOK", "false")).lower() == "true"
-    WEBHOOK_HOST: str|None = os.environ.get("WEBHOOK_HOST", "127.0.0.1")
-    WEBHOOK_PORT: int = int(os.environ.get("WEBHOOK_PORT", 8765))
-    WEBHOOK_AUTH_TOKEN: str|None = os.environ.get("WEBHOOK_AUTH_TOKEN", "")
-    WEBHOOK_RATE_LIMIT_RPM: int = int(os.environ.get("WEBHOOK_RATE_LIMIT_RPM", 10))
+    ENABLE_WEBHOOK: bool = str('false').lower() == 'true'
+    WEBHOOK_HOST: str|None = '127.0.0.1'
+    WEBHOOK_PORT: int = int(8765)
+    WEBHOOK_AUTH_TOKEN: str|None = ''
+    WEBHOOK_RATE_LIMIT_RPM: int = int(10)
+
+    # WebUI
+    ENABLE_WEBUI: bool = True
+    WEBUI_HOST: str = "127.0.0.1"
+    WEBUI_PORT: int = 8080
+    WEBUI_AUTH_KEY: SecretStr = SecretStr("")
 
     # 飞书（Lark）
-    ENABLE_FEISHU: bool = str(os.environ.get("ENABLE_FEISHU", "false")).lower() == "true"
-    FEISHU_APP_ID: str|None = os.environ.get("FEISHU_APP_ID", "")
-    FEISHU_APP_SECRET: SecretStr = SecretStr(os.environ.get("FEISHU_APP_SECRET", ""))
+    ENABLE_FEISHU: bool = str('false').lower() == 'true'
+    FEISHU_APP_ID: str|None = ''
+    FEISHU_APP_SECRET: SecretStr = SecretStr('')
     # 收到飞书文件/图片/音视频后的统一落盘目录
-    FEISHU_RECEIVED_DIR: str = os.environ.get("FEISHU_RECEIVED_DIR", "/root/workspace/received")
+    FEISHU_RECEIVED_DIR: str = '/root/workspace/received'
     # 单文件大小上限（MB）。下载接口官方上限 100MB；上传接口文件上限 30MB
-    FEISHU_MAX_DOWNLOAD_MB: int = int(os.environ.get("FEISHU_MAX_DOWNLOAD_MB", "100"))
-    FEISHU_MAX_SEND_FILE_MB: int = int(os.environ.get("FEISHU_MAX_SEND_FILE_MB", "30"))
+    FEISHU_MAX_DOWNLOAD_MB: int = int('100')
+    FEISHU_MAX_SEND_FILE_MB: int = int('30')
     # 纯文件消息暂存等待用户补充文本的过期时间（秒）
-    FEISHU_PENDING_FILE_TTL_SECONDS: int = int(os.environ.get("FEISHU_PENDING_FILE_TTL_SECONDS", "1800"))
+    FEISHU_PENDING_FILE_TTL_SECONDS: int = int('1800')
 
     # 持久化记忆
-    ENABLE_MEMORY: bool = str(os.environ.get("ENABLE_MEMORY", "true")).lower() == "true"
-    MEMORY_MAX_CONTEXT_TOKENS: int = int(os.environ.get("MEMORY_MAX_CONTEXT_TOKENS", 1500))
-    MEMORY_RECENT_SESSIONS: int = int(os.environ.get("MEMORY_RECENT_SESSIONS", 3))
-    MEMORY_MAX_SEARCH_CHUNKS: int = int(os.environ.get("MEMORY_MAX_SEARCH_CHUNKS", 100))
-    MEMORY_AUTO_ARCHIVE: bool = str(os.environ.get("MEMORY_AUTO_ARCHIVE", "true")).lower() == "true"
+    ENABLE_MEMORY: bool = str('true').lower() == 'true'
+    MEMORY_MAX_CONTEXT_TOKENS: int = int(1500)
+    MEMORY_RECENT_SESSIONS: int = int(3)
+    MEMORY_MAX_SEARCH_CHUNKS: int = int(100)
+    MEMORY_AUTO_ARCHIVE: bool = str('true').lower() == 'true'
 
     # Skills 技能系统
-    ENABLE_SKILLS: bool = str(os.environ.get("ENABLE_SKILLS", "true")).lower() == "true"
-    ENABLE_SKILL_SCRIPT: bool = str(os.environ.get("ENABLE_SKILL_SCRIPT", "false")).lower() == "true"
-    MAX_ACTIVE_SKILLS: int = int(os.environ.get("MAX_ACTIVE_SKILLS", 5))
-    PIP_INDEX_URL: str = os.environ.get("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")
-    NPM_REGISTRY: str = os.environ.get("NPM_REGISTRY", "https://registry.npmmirror.com")
-    SKILL_SCRIPT_TIMEOUT: int = int(os.environ.get("SKILL_SCRIPT_TIMEOUT", 120))
+    ENABLE_SKILLS: bool = str('true').lower() == 'true'
+    ENABLE_SKILL_SCRIPT: bool = str('false').lower() == 'true'
+    MAX_ACTIVE_SKILLS: int = int(5)
+    PIP_INDEX_URL: str = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+    NPM_REGISTRY: str = 'https://registry.npmmirror.com'
+    SKILL_SCRIPT_TIMEOUT: int = int(120)
 
     # MCP 接入（仅 Streamable HTTP）
-    ENABLE_MCP: bool = str(os.environ.get("ENABLE_MCP", "true")).lower() == "true"
-    MCP_CONNECT_TIMEOUT: int = int(os.environ.get("MCP_CONNECT_TIMEOUT", 30))
-    MCP_CALL_TIMEOUT: int = int(os.environ.get("MCP_CALL_TIMEOUT", 300))
-    MCP_MAX_TOOLS: int = int(os.environ.get("MCP_MAX_TOOLS", 100))
-    MCP_RESULT_MAX_CHARS: int = int(os.environ.get("MCP_RESULT_MAX_CHARS", 20000))
+    ENABLE_MCP: bool = str('true').lower() == 'true'
+    MCP_CONNECT_TIMEOUT: int = int(30)
+    MCP_CALL_TIMEOUT: int = int(300)
+    MCP_MAX_TOOLS: int = int(100)
+    MCP_RESULT_MAX_CHARS: int = int(20000)
 
     # 多 Agent 工作流（基于 LangGraph）
-    ENABLE_WORKFLOW: bool = str(os.environ.get("ENABLE_WORKFLOW", "true")).lower() == "true"
-    WORKFLOW_RECURSION_LIMIT: int = int(os.environ.get("WORKFLOW_RECURSION_LIMIT", 50))
-    WORKFLOW_NESTING_MAX: int = int(os.environ.get("WORKFLOW_NESTING_MAX", 5))
-    WORKFLOW_MAX_NODES: int = int(os.environ.get("WORKFLOW_MAX_NODES", 50))
-    WORKFLOW_MAX_BRANCHES: int = int(os.environ.get("WORKFLOW_MAX_BRANCHES", 20))
-    WORKFLOW_RESULT_MAX_CHARS: int = int(os.environ.get("WORKFLOW_RESULT_MAX_CHARS", 20000))
-    WORKFLOW_WORKER_POOL_SIZE: int = int(os.environ.get("WORKFLOW_WORKER_POOL_SIZE", 4))
-    WORKFLOW_HITL_DEFAULT_HANDLER: str = os.environ.get("WORKFLOW_HITL_DEFAULT_HANDLER", "interactive")
+    ENABLE_WORKFLOW: bool = str('true').lower() == 'true'
+    WORKFLOW_RECURSION_LIMIT: int = int(50)
+    WORKFLOW_NESTING_MAX: int = int(5)
+    WORKFLOW_MAX_NODES: int = int(50)
+    WORKFLOW_MAX_BRANCHES: int = int(20)
+    WORKFLOW_RESULT_MAX_CHARS: int = int(20000)
+    WORKFLOW_WORKER_POOL_SIZE: int = int(4)
+    WORKFLOW_HITL_DEFAULT_HANDLER: str = 'interactive'
 
 
 def load_config() -> GlobalConfig:

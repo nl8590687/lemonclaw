@@ -24,13 +24,13 @@ def create_openai_llm() -> ChatOpenAI:
     global_config = get_global_config()
     from agent.llm.reliability import ReliableChatOpenAI
     options = dict(
-        model=global_config.MODEL_NAME,
+        model=global_config.MODEL_NAME or "unconfigured",
         temperature=global_config.TEMPERATURE,
         max_tokens=global_config.MODEL_MAX_COMPLETION_TOKEN,
         streaming=True,
         stream_usage=True,
-        base_url=global_config.OPENAI_BASE_URL,
-        api_key=global_config.OPENAI_API_KEY,
+        base_url=global_config.OPENAI_BASE_URL or "http://127.0.0.1:9/v1",
+        api_key=global_config.OPENAI_API_KEY if global_config.OPENAI_API_KEY.get_secret_value() else "unconfigured",
         timeout=global_config.LLM_API_TIMEOUT,
         max_retries=0,  # SDK 重试由外层 LLM_MAX_RETRIES 统一控制，避免叠加。
     )
@@ -52,4 +52,6 @@ def create_openai_llm() -> ChatOpenAI:
                               if global_config.LLM_FALLBACK_API_KEY.get_secret_value()
                               else global_config.OPENAI_API_KEY)
         llm._fallback = ChatOpenAI(**options)
+    from config import runtime
+    llm._runtime_revision = runtime.revision
     return llm

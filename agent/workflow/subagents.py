@@ -52,7 +52,10 @@ class BaseSubAgent:
 
     def build(self):
         """构造 create_agent 实例。子类可覆盖以定制图（多节点/子图/专用工具）。"""
+        from agent.runtime_middleware import RuntimeConfigurationMiddleware
+        middleware = [RuntimeConfigurationMiddleware(allowed_names=[t.name for t in self.tools])] if getattr(get_global_config(), 'ENABLE_WEBUI', False) else []
         return create_agent(
+            middleware=middleware,
             model=self.model or self.llm,
             tools=self.tools,
             system_prompt=self.system_prompt,

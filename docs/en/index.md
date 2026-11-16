@@ -26,6 +26,8 @@ Start with [quick start](getting-started.md) to complete a terminal conversation
 - [Contributing](contributing.md)
 - [Architecture and project structure](architecture.md)
 
+- [WebUI](webui.md)
+
 ## To be completed
 
 - Product screenshots, demos, and end-to-end use cases.

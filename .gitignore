@@ -231,3 +231,7 @@ workspace/
 
 # Generated documentation site
 /site/
+
+# WebUI dependencies and generated assets
+/webui/node_modules/
+/webui/dist/

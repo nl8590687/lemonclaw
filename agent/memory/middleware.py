@@ -21,15 +21,22 @@ from langchain_core.messages import SystemMessage
 class MemoryMiddleware(AgentMiddleware):
     """每次模型调用前注入技能目录和活跃技能全文。"""
 
-    def __init__(self, memory_manager, base_prompt: str, skill_manager=None):
+    def __init__(self, memory_manager, base_prompt: str, skill_manager=None, *, live_config=False):
+        self.live_config = live_config
         self.memory_manager = memory_manager
         self.skill_manager = skill_manager
         self.base_prompt = base_prompt            # 固定为 BASE_SYSTEM_PROMPT
 
     def wrap_model_call(self, request, handler):
         # 技能摘要 + 活跃全文：每轮现算（不缓存）--本回合 load_skill/unload_skill/enable/disable 会改变
-        skill_summary = self.skill_manager.get_skill_summary_text() if self.skill_manager else ""
-        active_section = self.skill_manager.build_active_section() if self.skill_manager else ""
+        from config import get_global_config
+        cfg = get_global_config()
+        manager = self.skill_manager
+        if self.live_config:
+            from agent.skill import get_skill_manager
+            manager = get_skill_manager() if cfg.ENABLE_SKILLS else None
+        skill_summary = manager.get_skill_summary_text() if manager else ""
+        active_section = manager.build_active_section() if manager else ""
         content = self.base_prompt
         if skill_summary:
             content += "\n\n" + skill_summary

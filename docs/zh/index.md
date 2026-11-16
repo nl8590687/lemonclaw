@@ -26,6 +26,8 @@ LemonClaw 是可自行部署的 AI 数字员工 Agent，可通过终端、飞书
 - [贡献指南](contributing.md)
 - [架构与项目结构](architecture.md)
 
+- [WebUI](webui.md)
+
 ## 待补充
 
 - 产品截图、演示与端到端使用案例。

@@ -291,7 +291,7 @@ class AgentService:
         return result
 
     def _close_question(self, row):
-        if row['origin'].get('source') == 'feishu':
+        if row.get('message_id'):
             try:
                 from channels.device.feishu import get_feishu_client
                 client = get_feishu_client()
@@ -304,12 +304,18 @@ class AgentService:
         if row['presented'] and not force:
             return
         try:
-            if row['origin'].get('source') == 'feishu':
+            from channels.webui import state as web_state
+            from channels.device.feishu import get_feishu_owner_open_id
+            web_active = getattr(web_state, 'enabled', False)
+            feishu_allowed = not web_active or getattr(get_global_config(), 'ENABLE_FEISHU', False)
+            owner = get_feishu_owner_open_id() if web_active and feishu_allowed else None
+            if feishu_allowed and (row['origin'].get('source') == 'feishu' or owner):
                 from channels.device.feishu import get_feishu_client
                 client = get_feishu_client()
                 if client is None:
                     raise ValueError('飞书机器人未连接')
-                message_id = client.sender.send_question(row)
+                target_row = dict(row, origin=dict(row['origin'], open_id=owner)) if owner and row['origin'].get('source') != 'feishu' else row
+                message_id = client.sender.send_question(target_row)
                 self.questions.present(row['question_id'], message_id)
             else:
                 from channels.out.fanout import FanoutOutputChannel
@@ -384,13 +390,16 @@ class AgentService:
         """构造上下文中间件并刷新 self._middleware 引用。
         记忆或技能任一开启 -> 挂载 MemoryMiddleware（base_prompt 固定 BASE_SYSTEM_PROMPT，
         技能摘要与活跃全文由中间件每轮现取）；两者均关 -> 返回 []。"""
-        need_mw = bool(self.memory or self.skill_manager)
+        need_mw = bool(self.memory or self.skill_manager or getattr(get_global_config(), "ENABLE_WEBUI", False))
+        from agent.runtime_middleware import RuntimeConfigurationMiddleware
+        live = [RuntimeConfigurationMiddleware()] if getattr(get_global_config(), "ENABLE_WEBUI", False) else []
         if not need_mw:
             self._middleware = None
-            return []
-        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT, skill_manager=self.skill_manager)]
+            return live
+        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT, skill_manager=self.skill_manager,
+                               live_config=getattr(get_global_config(), "ENABLE_WEBUI", False))]
         self._middleware = mw[0]
-        return mw
+        return live + mw
 
     def _thread_config(self) -> dict:
         return {"configurable": {"thread_id": f"session:{self.session_id}"}}

@@ -17,3 +17,6 @@ tests/
 htmlcov/
 .coverage
 
+webui/node_modules/
+webui/dist/
+site/

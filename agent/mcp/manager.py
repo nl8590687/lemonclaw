@@ -78,7 +78,8 @@ class MCPManager:
         self.config_path = get_db_path().parent / "mcp.json"   # .lemonclaw/mcp.json（固定路径）
         self._connections: dict[str, MCPConnection] = {}
         self._sync_from_file()          # mcp.json -> DB（upsert + delete_missing）
-        self._auto_connect_all()
+        if getattr(cfg, "ENABLE_MCP", True):
+            self._auto_connect_all()
 
     # ============ 配置文件（mcp.json 为唯一来源）============
 
@@ -160,15 +161,17 @@ class MCPManager:
         server = self.dao.get(server_id)
         if server is None:
             return False, f"MCP 服务 {server_id} 不存在"
-        if server_id in self._connections:
-            try:
-                self._connections[server_id].disconnect()
-            except Exception:
-                pass
+        previous = self._connections.get(server_id)
         conn = self._build_connection(server)
         self.dao.set_status(server_id, "connecting", None)
-        self._connections[server_id] = conn
         ok, err = conn.connect()
+        # Keep the old generation available until connection negotiation finishes.
+        self._connections[server_id] = conn
+        if previous is not None:
+            try:
+                getattr(previous, "retire", previous.disconnect)()
+            except Exception:
+                logger.debug("Old MCP generation retirement failed", exc_info=True)
         if ok:
             tools_cache = [
                 {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
@@ -187,7 +190,7 @@ class MCPManager:
         conn = self._connections.pop(server_id, None)
         if conn is not None:
             try:
-                conn.disconnect()
+                getattr(conn, "retire", conn.disconnect)()
             except Exception as e:
                 logger.debug(f"断开 {server_id} 异常（忽略）: {e}")
         try:
@@ -196,8 +199,7 @@ class MCPManager:
             pass
 
     def reconnect(self, server_id: str) -> tuple[bool, str]:
-        """disconnect + connect。"""
-        self.disconnect(server_id)
+        """连接新 generation 后切换，旧调用完成后释放旧连接。"""
         return self.connect(server_id)
 
     def reload(self) -> None:
@@ -205,10 +207,14 @@ class MCPManager:
         -> 移除已删服务端的 _connections -> 重连所有 enabled -> 同步 DB。
         不重建 agent（由 AgentService.reload_mcp_tools 负责）。密钥在 mcp.json，无需重载 .env。"""
         self._sync_from_file()
-        all_ids = {s.server_id for s in self.dao.list_all()}
+        from config import get_global_config
+        if not getattr(get_global_config(), "ENABLE_MCP", True):
+            self.close()
+            return
+        all_ids = {s.server_id for s in self.dao.list_all(include_disabled=False)}
         for sid in list(self._connections.keys()):
             if sid not in all_ids:
-                self._connections[sid].disconnect()
+                getattr(self._connections[sid], "retire", self._connections[sid].disconnect)()
                 del self._connections[sid]
         for server in self.dao.list_all(include_disabled=False):
             try:
@@ -316,7 +322,7 @@ class MCPManager:
                 while name in used_names:
                     name, index = f"{base[:64-len(str(index))-1]}_{index}", index + 1
                 used_names.add(name)
-                tools.append(create_protocol_tool(conn, name))
+                tools.append(create_protocol_tool(conn, name, self))
                 total += 1
         return tools
 

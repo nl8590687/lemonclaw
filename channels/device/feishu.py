@@ -200,8 +200,10 @@ class FeishuMessageSender:
             response = self.client.im.v1.message.patch(request)
             if not response.success():
                 lark.logger.warning('人工确认卡片状态更新失败')
+            return response.success()
         except Exception:
             lark.logger.warning('人工确认卡片状态更新失败')
+            return False
 
     def add_reaction(self, message_id: str, emoji_type: str) -> str | None:
         """以当前机器人身份添加消息表情，返回可用于撤销的 reaction_id。"""
@@ -1014,7 +1016,7 @@ def get_feishu_client() -> FeishuClient | None:
     return _feishu_client
 
 
-def set_feishu_client(client: FeishuClient) -> None:
+def set_feishu_client(client: FeishuClient | None) -> None:
     """设置全局飞书客户端实例"""
     global _feishu_client
     with _feishu_lock:
@@ -1197,3 +1199,41 @@ def markdown_reply_cards(text: str, event_type: object = None):
         suffix = '\n' + after[0] if after else ''
         yield card(prefix + chunk + suffix, part)
         offset, state, part = end, after, part + 1
+
+
+def sync_owner_question(row):
+    """Retry closed-card display without resubmitting the stored answer."""
+    if not row or row['status'] == 'pending' or not row.get('message_id'):
+        return
+    client = get_feishu_client()
+    if client is not None and client.sender.close_question(row):
+        set_state('question.card.' + row['question_id'], row['status'])
+
+
+_question_sync_lock = threading.Lock()
+
+
+def sync_pending_owner_questions():
+    if not _question_sync_lock.acquire(blocking=False):
+        return
+    def work():
+        try:
+            _sync_pending_owner_questions()
+        finally:
+            _question_sync_lock.release()
+    threading.Thread(target=work, daemon=True, name="question-card-sync").start()
+
+
+def _sync_pending_owner_questions():
+    from channels.webui import state
+    if not getattr(state, 'enabled', False):
+        return
+    from dao.db import get_connection
+    from dao.question import QuestionDAO
+    store = QuestionDAO()
+    with get_connection() as conn:
+        ids = [r[0] for r in conn.execute("SELECT question_id FROM user_questions WHERE status!='pending' AND message_id IS NOT NULL ORDER BY deadline DESC LIMIT 100")]
+    for qid in ids:
+        row = store.get(qid)
+        if row and get_state('question.card.' + qid) != row['status']:
+            sync_owner_question(row)
