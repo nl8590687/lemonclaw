@@ -10,7 +10,7 @@ from dotenv import dotenv_values
 from pydantic import SecretStr
 
 from config import get_global_config
-from config.descriptions import DESCRIPTIONS
+from config.descriptions import DESCRIPTIONS, LEGACY_DEFAULTS
 from dao.db import get_db_path
 
 lock = threading.RLock()
@@ -66,7 +66,8 @@ def settings():
     raw = dotenv_values(env_path())
     fields = []
     for name, field in type(cfg).model_fields.items():
-        value, default = getattr(cfg, name), field.default
+        value = getattr(cfg, name)
+        default = LEGACY_DEFAULTS.get(name, field.default)
         sensitive = secret_name(name) or isinstance(value, SecretStr)
         fields.append(
             dict(
@@ -116,7 +117,7 @@ def save(changes: dict, expected=None, *, custom=False):
         data = cfg.model_dump()
         for name, value in changes.items():
             if name in fields:
-                data[name] = fields[name].default if value is None else value
+                data[name] = LEGACY_DEFAULTS.get(name, fields[name].default) if value is None else value
         candidate = type(cfg).model_validate(data)
         import math
 
@@ -147,7 +148,7 @@ def save(changes: dict, expected=None, *, custom=False):
         ]
         text = "".join(lines).rstrip("\n") + "\n"
         for name, value in changes.items():
-            if value is None and custom:
+            if (custom and value is None) or (name in fields and getattr(candidate, name) is None):
                 continue
             value = plain(getattr(candidate, name)) if name in fields else plain(value)
             # python-dotenv quoted strings preserve literal newlines and special characters.
@@ -163,12 +164,13 @@ def save(changes: dict, expected=None, *, custom=False):
             if os.path.exists(tmp):
                 os.unlink(tmp)
         # Preserve references held by existing tools; calls already in progress retain their arguments.
-        for name in fields:
+        for name in changes.keys() & fields.keys():
             setattr(cfg, name, getattr(candidate, name))
         for name, value in changes.items():
-            if value is None and custom:
+            if (custom and value is None) or (name in fields and getattr(candidate, name) is None):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = plain(getattr(candidate, name)) if name in fields else plain(value)
-        revision += 1
+        if any(name != "ENABLE_WEBUI" and not name.startswith("WEBUI_") for name in changes):
+            revision += 1
         return settings()

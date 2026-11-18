@@ -74,11 +74,11 @@ class ControlCallback(BaseCallbackHandler):
         self.control.check()
 
 
-def controlled_node(fn, nc, name, compensation=None):
+def controlled_node(fn, nc, name, compensation=None, *, track_status=False):
     """每次仅重试当前失败节点；已完成节点由图的 checkpoint 保留。"""
     def run(state, config=None):
         parent = current_control()
-        run_id = (config or {}).get('configurable', {}).get('thread_id')
+        run_id = (config or {}).get('configurable', {}).get('thread_id') if track_status else None
         if run_id:
             run_id = run_id.removeprefix('workflow:').split('|')[0]
         def report(status):
@@ -159,7 +159,7 @@ def controlled_node(fn, nc, name, compensation=None):
                         time.sleep(min(0.05, max(0, end - time.monotonic())))
                     continue
                 if nc.get("on_error") == "compensate" and compensation:
-                    return controlled_node(compensation, {"timeout_seconds": nc.get("timeout_seconds", 300)}, name + "-compensate")(state, config)
+                    return controlled_node(compensation, {"timeout_seconds": nc.get("timeout_seconds", 300)}, name + "-compensate", track_status=track_status)(state, config)
                 if nc.get("on_error", "fail") == "continue":
                     output = nc.get("output_field", {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(nc.get("kind"), "output"))
                     return {output: f"❌ 节点 {name} 执行出错: {ex}"}

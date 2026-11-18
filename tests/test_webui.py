@@ -316,7 +316,7 @@ def test_nested_workflow_snapshot_survives_edit_and_restart(web):
         edges=[dict(src="START", dst="child"), dict(src="child", dst="END")],
     )
     parent = manager.define_workflow("parent", "", parent_spec)
-    rid, result = manager.start_run(parent.workflow_id, {"answer": ""}, {})
+    rid, result = manager.start_run(parent.workflow_id, {"answer": ""}, {"source": "webui"})
     assert rid, result
 
     def wait(owner, status):
@@ -516,3 +516,41 @@ def test_disabled_feishu_uses_web_question_without_stale_client(web, monkeypatch
     client.assert_not_called()
     output.write_message.assert_called_once()
     assert store.get("disabled-feishu-question")["presented"]
+
+
+def test_startup_env_precedence_and_webui_default_display(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    directory = tmp_path / ".lemonclaw"
+    directory.mkdir()
+    (directory / ".env").write_text(
+        "WEB_ACCESS_ALLOW_PRIVATE=false\nTEMPERATURE=0.4\nWEBHOOK_PORT=9876\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("WEB_ACCESS_ALLOW_PRIVATE", raising=False)
+    monkeypatch.delenv("TEMPERATURE", raising=False)
+    monkeypatch.setenv("WEBHOOK_PORT", "9765")
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+from config import get_global_config, runtime
+cfg = get_global_config()
+assert cfg.WEB_ACCESS_ALLOW_PRIVATE is False
+assert cfg.TEMPERATURE == 0.4
+assert cfg.WEBHOOK_PORT == 9765
+fields = {item['name']: item for item in runtime.settings()['fields']}
+assert fields['WEB_ACCESS_ALLOW_PRIVATE']['default'] is True
+assert fields['WEBHOOK_PORT']['default'] == 8765
+runtime.save({'WEB_ACCESS_ALLOW_PRIVATE': None})
+assert cfg.WEB_ACCESS_ALLOW_PRIVATE is True
+assert cfg.WEBHOOK_PORT == 9765
+""",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )

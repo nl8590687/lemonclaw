@@ -181,18 +181,21 @@ def _human_node(nc: dict):
 def _subgraph_node(nc: dict, manager):
     """嵌套另一工作流作为子图（编译期静态嵌套）。子图共享同名 state key。"""
     sub_workflow_id = nc.get("sub_workflow_id", "")
-    sub_graph = manager._get_graph_by_id(sub_workflow_id)
+    use_snapshot = getattr(manager, "use_run_snapshot", False) is True
+    snapshot_graph = manager._get_graph_by_id(sub_workflow_id) if use_snapshot else None
+
     def fn(state, config=None):
         try:
+            sub_graph = snapshot_graph if use_snapshot else manager._get_graph_by_id(sub_workflow_id)
             if sub_graph is None:
-                raise ValueError(f"子工作流不存在: {sub_workflow_id}")
-            # Forward LangGraph's checkpoint namespace for nested interrupt/resume.
+                return {_output_field(nc, "output"): f"❌ 子工作流不存在: {sub_workflow_id}"}
+            if not use_snapshot:
+                import uuid
+                config = {"configurable": {"thread_id": f"sub_{uuid.uuid4().hex[:8]}"}}
             result = sub_graph.invoke(dict(state), config=config)
             return {k: v for k, v in result.items() if k in (state or {})}
-        except GraphBubbleUp:
-            raise
         except Exception as ex:
-            if any(k in nc for k in ("max_retries", "on_error", "timeout_seconds")):
+            if (use_snapshot and isinstance(ex, GraphBubbleUp)) or any(k in nc for k in ("max_retries", "on_error", "timeout_seconds")):
                 raise
             logger.exception("subgraph_node %s failed", sub_workflow_id)
             return {_output_field(nc, "output"): f"❌ 子工作流 {sub_workflow_id} 执行出错: {ex}"}

@@ -3,7 +3,6 @@
 import logging
 from pathlib import Path
 import threading
-import time
 from config import get_global_config
 
 log = logging.getLogger(__name__)
@@ -12,9 +11,13 @@ _server = None
 _stop = threading.Event()
 
 
+def available():
+    return DIST.joinpath("index.html").is_file()
+
+
 def start():
     _stop.clear()
-    if not DIST.joinpath("index.html").is_file():
+    if not available():
         log.warning("WebUI disabled: run npm ci && npm run build in webui/ first")
         return
 

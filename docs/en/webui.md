@@ -48,7 +48,7 @@ The existing webhook port remains separate. For remote access, configure HTTPS o
 - Cron schedules, MCP connections and persistent memories are managed through the existing managers and database. MCP supports HTTP, SSE and stdio; omitted credentials are preserved. Connection failures remain visible as connection status rather than a successful connection claim.
 - Skills accepts a ZIP with `SKILL.md` at its root or inside one top-level directory. Preview and installation are separate. Upload never executes dependencies; dependency installation is a separate explicit action. Referenced Skills cannot be deleted or replaced.
 
-Changing a workflow affects future runs. Runs store the workflow and child definitions used when they started. Running/referenced workflow deletion is rejected. Graph validation rejects unsupported fields rather than silently dropping them. The current backend spec does not expose arbitrary Python nodes or all LangGraph SDK APIs; consult [Workflows](workflows.md) for the supported execution model.
+Changing a workflow affects future runs. While WebUI is active, new runs store the workflow and child definitions used when they started. Running/referenced workflow deletion is rejected. Graph validation rejects unsupported fields rather than silently dropping them. The current backend spec does not expose arbitrary Python nodes or all LangGraph SDK APIs; consult [Workflows](workflows.md) for the supported execution model.
 
 The frontend locale catalogs are in `webui/src/i18n/locales/`; new locales can be registered in `webui/src/i18n/index.ts`. English is the fallback. The navigation and forms adapt to narrow screens; complex graphs can also be edited through their node list and JSON representation.
 

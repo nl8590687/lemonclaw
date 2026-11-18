@@ -436,7 +436,7 @@ def test_reconfiguration_keeps_old_generation_until_new_connection_ready():
     manager.dao = MagicMock()
     manager._connections = {'server':old}
     manager._build_connection = lambda server:new
-    worker=threading.Thread(target=manager.connect,args=('server',))
+    worker=threading.Thread(target=manager.connect,args=('server',),kwargs={'preserve_active':True})
     worker.start()
     try:
         assert entered.wait(5)

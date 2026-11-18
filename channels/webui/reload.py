@@ -3,7 +3,7 @@
 from config import get_global_config
 
 
-def channel_snapshot():
+def resource_snapshot():
     cfg = get_global_config()
     from config.runtime import plain
 
@@ -13,7 +13,7 @@ def channel_snapshot():
             for name in getattr(type(cfg), "model_fields", vars(cfg))
             if name.startswith(prefix) or name == "ENABLE_" + prefix.rstrip("_")
         }
-        for prefix in ("FEISHU_", "WEBHOOK_")
+        for prefix in ("FEISHU_", "WEBHOOK_", "MCP_")
     }
 
 
@@ -26,6 +26,8 @@ def refresh_agent(service):
     from agent.workflow import get_workflow_manager
 
     cfg = get_global_config()
+    previous = getattr(service, "_web_resources", {})
+    current = resource_snapshot()
     service.llm = create_openai_llm()
     service.memory = get_memory_manager() if cfg.ENABLE_MEMORY else None
     service.skill_manager = get_skill_manager() if cfg.ENABLE_SKILLS else None
@@ -34,15 +36,15 @@ def refresh_agent(service):
         sm.max_active = cfg.MAX_ACTIVE_SKILLS
         sm.script_timeout = cfg.SKILL_SCRIPT_TIMEOUT
         sm.pip_index_url, sm.npm_registry = cfg.PIP_INDEX_URL, cfg.NPM_REGISTRY
-        sm.reload()
     if not cfg.ENABLE_MCP and service.mcp_manager is not None:
-        service.mcp_manager.close()
+        service.mcp_manager.close(preserve_active=True)
     service.mcp_manager = get_mcp_manager() if cfg.ENABLE_MCP else None
     if service.mcp_manager:
         mm = service.mcp_manager
         mm.connect_timeout, mm.call_timeout = cfg.MCP_CONNECT_TIMEOUT, cfg.MCP_CALL_TIMEOUT
         mm.max_tools, mm.result_max_chars = cfg.MCP_MAX_TOOLS, cfg.MCP_RESULT_MAX_CHARS
-        mm.reload()
+        if previous.get("MCP_") != current["MCP_"]:
+            mm.reload(preserve_active=True)
     service.workflow_manager = get_workflow_manager() if cfg.ENABLE_WORKFLOW else None
     if service.workflow_manager:
         service.workflow_manager.llm = service.llm
@@ -67,8 +69,6 @@ def refresh_agent(service):
     import loop
     from channels.ins import WebhookInput, FeishuInput
 
-    previous = getattr(service, "_web_channels", {})
-    current = channel_snapshot()
     for cls, enabled, prefix in [
         (WebhookInput, cfg.ENABLE_WEBHOOK, "WEBHOOK_"),
         (FeishuInput, cfg.ENABLE_FEISHU, "FEISHU_"),
@@ -91,4 +91,4 @@ def refresh_agent(service):
             source.start()
             loop._event_sources.append(source)
 
-    service._web_channels = current
+    service._web_resources = current

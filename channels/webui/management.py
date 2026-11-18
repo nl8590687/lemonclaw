@@ -188,7 +188,9 @@ def operation(kind, item_id, method, data):
 
             if data["action"] != "disable" and not get_global_config().ENABLE_MCP:
                 raise ValueError("Enable MCP in settings before connecting")
-            result = getattr(manager, data["action"] + ("_server" if data["action"] != "reconnect" else ""))(item_id)
+            result = getattr(manager, data["action"] + ("_server" if data["action"] != "reconnect" else ""))(
+                item_id, preserve_active=True
+            )
             if isinstance(result, tuple) and not result[0]:
                 raise ValueError(result[1])
             from config.runtime import touch
@@ -232,7 +234,7 @@ def operation(kind, item_id, method, data):
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-        manager.reload()
+        manager.reload(preserve_active=True)
         from config.runtime import touch
 
         touch()

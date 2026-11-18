@@ -120,6 +120,7 @@ class WorkflowManager:
         owner = self
         definitions = snapshot.get('definitions') or {snapshot['workflow_id']: snapshot}
         class SnapshotManager:
+            use_run_snapshot = True
             def __getattr__(self, name):
                 return getattr(owner, name)
             def get_workflow(self, workflow_id):
@@ -218,8 +219,9 @@ class WorkflowManager:
         if wf.last_error:
             return None, {"error": f"工作流编译失败: {wf.last_error}"}
         try:
-            snapshot = self._snapshot(wf)
-            graph = self._snapshot_graph(snapshot)
+            from channels.webui import state as webui
+            snapshot = self._snapshot(wf) if webui.enabled or (context or {}).get("source") == "webui" else None
+            graph = self._snapshot_graph(snapshot) if snapshot else self._get_graph(wf)
         except Exception as ex:
             return None, {"error": f"编译失败: {ex}"}
 
@@ -229,8 +231,9 @@ class WorkflowManager:
             status="running", input=input or {}, origin_context=context or {},
         )
         self.dao.create_run(run)
-        from dao.webui import WebStore
-        WebStore().layout('run:' + run_id, snapshot)
+        if snapshot:
+            from dao.webui import WebStore
+            WebStore().layout('run:' + run_id, snapshot)
 
         self.executor.submit(self._run_invoke_task, graph, run_id, wf.workflow_id, input or {}, context or {})
         return run_id, {"status": "running"}

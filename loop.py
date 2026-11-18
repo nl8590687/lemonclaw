@@ -81,9 +81,11 @@ def loop_forever():
     from config import runtime
     web_state.service = svr
     svr._web_config_revision = runtime.revision
-    from channels.webui.reload import channel_snapshot
-    svr._web_channels = channel_snapshot()
-    web_state.recover_requests()
+    from channels.webui.server import available
+    if getattr(get_global_config(), "ENABLE_WEBUI", False) and available():
+        from channels.webui.reload import resource_snapshot
+        svr._web_resources = resource_snapshot()
+        web_state.recover_requests()
     msg_bus = get_bus()
     while True:
         out_chan = svr.default_out_chan
@@ -92,6 +94,7 @@ def loop_forever():
         reaction_waiting = False
         question_origin = None
         request_claimed = False
+        event_msg = None
         try:
             if getattr(svr, '_web_config_revision', runtime.revision) != runtime.revision:
                 from channels.webui.reload import refresh_agent
@@ -108,7 +111,8 @@ def loop_forever():
             else:
                 event_msg: EventMessage = msg_bus.poll(timeout=1)
             from channels.device.feishu import sync_pending_owner_questions
-            sync_pending_owner_questions()
+            if web_state.enabled:
+                sync_pending_owner_questions()
             if not event_msg:
                 continue
             from channels.device.feishu import reaction_eligible, turn_completed
@@ -136,7 +140,8 @@ def loop_forever():
                 continue
 
             request_id = event_msg.context.get('request_id')
-            if request_id:
+            if request_id and (event_msg.event_type == EventType.WEBUI or
+                               (event_msg.context.get("_question_ready_id") and event_msg.context.get("source") == "webui")):
                 request_claimed = WebStore().claim(request_id, resume=bool(event_msg.context.get('_question_ready_id')))
                 if not request_claimed:
                     continue
@@ -145,7 +150,6 @@ def loop_forever():
                     web_state.busy.set()
                 if not event_msg.context.get('_question_ready_id'):
                     web_state.emit('input', dict(content=msg_text, source=event_msg.context.get('source', event_msg.event_type.value)))
-                rid = event_msg.context.get('request_id')
             event_msg.context["_event_type"] = event_msg.event_type.value
             out_chan = get_output_channel(event_msg)
             is_terminal_event = event_msg.event_type.value == EventType.TERMINAL.value
@@ -169,7 +173,8 @@ def loop_forever():
             elif msg_text.strip().startswith("/"):
                 if not handle_command(out_chan, agent_service=svr, command=msg_text) and is_terminal_event:
                     break
-                reaction_completed = True
+                if request_claimed:
+                    reaction_completed = True
             else:
                 context = event_msg.context
                 result = svr.run(msg_text.strip(), context, out_chan, attachments=attachments)
@@ -182,11 +187,11 @@ def loop_forever():
         except Exception as ex:
             out_chan.write_system_error(f"error: {ex}")
         finally:
-            if 'event_msg' in locals() and event_msg and request_claimed:
+            if event_msg and request_claimed:
                 rid = event_msg.context.get('request_id')
                 if rid:
                     WebStore().request(rid, 'waiting_human' if reaction_waiting else 'completed' if reaction_completed else 'failed')
-            if getattr(web_state, 'enabled', False) and 'event_msg' in locals() and event_msg:
+            if getattr(web_state, 'enabled', False) and event_msg:
                 web_state.emit('refresh', dict(busy=False))
             web_state.busy.clear()
             from channels.device.feishu import finish_live_reaction

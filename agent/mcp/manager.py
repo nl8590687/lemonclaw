@@ -156,20 +156,26 @@ class MCPManager:
 
     # ============ 连接管理 ============
 
-    def connect(self, server_id: str) -> tuple[bool, str]:
+    def connect(self, server_id: str, *, preserve_active: bool = False) -> tuple[bool, str]:
         """连接单个服务端（已连接先 disconnect）；成功后同步 DB 缓存。"""
         server = self.dao.get(server_id)
         if server is None:
             return False, f"MCP 服务 {server_id} 不存在"
         previous = self._connections.get(server_id)
+        if previous is not None and not preserve_active:
+            try:
+                previous.disconnect()
+            except Exception:
+                pass
         conn = self._build_connection(server)
         self.dao.set_status(server_id, "connecting", None)
+        if not preserve_active:
+            self._connections[server_id] = conn
         ok, err = conn.connect()
-        # Keep the old generation available until connection negotiation finishes.
         self._connections[server_id] = conn
-        if previous is not None:
+        if previous is not None and preserve_active:
             try:
-                getattr(previous, "retire", previous.disconnect)()
+                previous.retire()
             except Exception:
                 logger.debug("Old MCP generation retirement failed", exc_info=True)
         if ok:
@@ -185,12 +191,12 @@ class MCPManager:
             self.dao.set_status(server_id, "error", err)
         return ok, err
 
-    def disconnect(self, server_id: str) -> None:
+    def disconnect(self, server_id: str, *, preserve_active: bool = False) -> None:
         """断开并从 _connections 移除；状态落库。"""
         conn = self._connections.pop(server_id, None)
         if conn is not None:
             try:
-                getattr(conn, "retire", conn.disconnect)()
+                (conn.retire if preserve_active else conn.disconnect)()
             except Exception as e:
                 logger.debug(f"断开 {server_id} 异常（忽略）: {e}")
         try:
@@ -198,27 +204,34 @@ class MCPManager:
         except Exception:
             pass
 
-    def reconnect(self, server_id: str) -> tuple[bool, str]:
+    def reconnect(self, server_id: str, *, preserve_active: bool = False) -> tuple[bool, str]:
         """连接新 generation 后切换，旧调用完成后释放旧连接。"""
+        if preserve_active:
+            return self.connect(server_id, preserve_active=True)
+        self.disconnect(server_id)
         return self.connect(server_id)
 
-    def reload(self) -> None:
+    def reload(self, *, preserve_active: bool = False) -> None:
         """热重载：_sync_from_file（重读 mcp.json，含密钥 -> upsert DB + delete_missing）
         -> 移除已删服务端的 _connections -> 重连所有 enabled -> 同步 DB。
         不重建 agent（由 AgentService.reload_mcp_tools 负责）。密钥在 mcp.json，无需重载 .env。"""
         self._sync_from_file()
         from config import get_global_config
-        if not getattr(get_global_config(), "ENABLE_MCP", True):
-            self.close()
+        if preserve_active and not getattr(get_global_config(), "ENABLE_MCP", True):
+            self.close(preserve_active=True)
             return
-        all_ids = {s.server_id for s in self.dao.list_all(include_disabled=False)}
+        all_ids = {s.server_id for s in self.dao.list_all() if not preserve_active or s.enabled}
         for sid in list(self._connections.keys()):
             if sid not in all_ids:
-                getattr(self._connections[sid], "retire", self._connections[sid].disconnect)()
+                connection = self._connections[sid]
+                (connection.retire if preserve_active else connection.disconnect)()
                 del self._connections[sid]
         for server in self.dao.list_all(include_disabled=False):
             try:
-                self.connect(server.server_id)
+                if preserve_active:
+                    self.connect(server.server_id, preserve_active=True)
+                else:
+                    self.connect(server.server_id)
             except Exception as e:
                 logger.warning(f"reload 重连 {server.server_id} 异常: {e}")
 
@@ -257,18 +270,21 @@ class MCPManager:
         self._sync_from_file()   # delete_missing 删 DB 行
         return True
 
-    def enable_server(self, server_id: str) -> tuple[bool, str]:
+    def enable_server(self, server_id: str, *, preserve_active: bool = False) -> tuple[bool, str]:
         """set_enabled(True) -> connect。"""
         if not self.dao.set_enabled(server_id, True):
             return False, f"MCP 服务 {server_id} 不存在"
-        ok, err = self.connect(server_id)
+        ok, err = self.connect(server_id, preserve_active=True) if preserve_active else self.connect(server_id)
         if ok:
             return True, "已启用并连接"
         return True, f"已启用，但连接失败: {err}"
 
-    def disable_server(self, server_id: str) -> tuple[bool, str]:
+    def disable_server(self, server_id: str, *, preserve_active: bool = False) -> tuple[bool, str]:
         """disconnect -> set_enabled(False)。"""
-        self.disconnect(server_id)
+        if preserve_active:
+            self.disconnect(server_id, preserve_active=True)
+        else:
+            self.disconnect(server_id)
         if not self.dao.set_enabled(server_id, False):
             return False, f"MCP 服务 {server_id} 不存在"
         return True, "已禁用"
@@ -369,9 +385,12 @@ class MCPManager:
                 logger.warning("MCP 调用已完成，但统计更新失败: %s", server_id)
         return message
 
-    def close(self):
+    def close(self, *, preserve_active: bool = False):
         for server_id in list(self._connections):
-            self.disconnect(server_id)
+            if preserve_active:
+                self.disconnect(server_id, preserve_active=True)
+            else:
+                self.disconnect(server_id)
 
     # ============ 查询 ============
 
