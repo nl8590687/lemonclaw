@@ -1,6 +1,7 @@
 """WebUI tests use a private temporary copy of the existing singleton database."""
 
 import io
+import mimetypes
 import os
 import subprocess
 import sys
@@ -104,6 +105,14 @@ def test_protected_context_and_static_fallback(web):
     assert "HttpOnly" in response.headers["set-cookie"]
     assert web.get("/api/v1/conversation/context").json()["messages"][0]["content"] == "shared history"
     assert web.get("/api/v1/missing").status_code == 404
+
+
+def test_static_javascript_media_type(web, monkeypatch):
+    monkeypatch.setattr(mimetypes, "guess_type", lambda *_args, **_kwargs: ("text/plain", None))
+    monkeypatch.setattr(mimetypes, "guess_file_type", mimetypes.guess_type, raising=False)
+    response = web.get("/assets/app.js")
+    assert response.status_code == 200
+    assert response.headers["content-type"].split(";")[0] == "text/javascript"
 
 
 def test_auth_origin_logout_and_rotation(web):

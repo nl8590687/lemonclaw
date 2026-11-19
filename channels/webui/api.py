@@ -28,6 +28,7 @@ from dao.question import QuestionDAO
 from dao.webui import WebStore
 
 OWNER = dict(source="webui", session_key="session-default", _webui_owner=True)
+STATIC_MEDIA_TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html"}
 
 
 def ensure_key():
@@ -350,9 +351,9 @@ def create_app(dist: Path):
         if not target.is_relative_to(dist.resolve()):
             raise HTTPException(404)
         if target.is_file():
-            return FileResponse(target)
+            return FileResponse(target, media_type=STATIC_MEDIA_TYPES.get(target.suffix.lower()))
         if path.startswith("assets/"):
             raise HTTPException(404)
-        return FileResponse(dist / "index.html")
+        return FileResponse(dist / "index.html", media_type="text/html")
 
     return app
