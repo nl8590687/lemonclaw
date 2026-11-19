@@ -22,10 +22,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import agent.memory as _am
 import dao.db as _db
 from agent.memory.manager import MemoryManager
+from agent.memory.middleware import MemoryMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
@@ -196,9 +198,9 @@ class _FakeMgr:
         return self.ctx
 
 
+@patch("agent.memory.middleware.get_global_config", **{"return_value.ENABLE_SKILLS": False})
 class TestMemoryMiddleware(unittest.TestCase):
-    def test_override_system_message(self):
-        from agent.memory.middleware import MemoryMiddleware
+    def test_override_system_message(self, _config):
         mw = MemoryMiddleware(_FakeMgr("记忆上下文"), "BASE_PROMPT")
         req = _FakeRequest([HumanMessage(content="你好", id="u1")])
         captured = {}
@@ -211,8 +213,7 @@ class TestMemoryMiddleware(unittest.TestCase):
         self.assertIn("BASE_PROMPT", captured["sm"].content)
         self.assertNotIn("记忆上下文", captured["sm"].content)
 
-    def test_query_cache(self):
-        from agent.memory.middleware import MemoryMiddleware
+    def test_query_cache(self, _config):
         mgr = _FakeMgr("CTX")
         mw = MemoryMiddleware(mgr, "BASE")
         ok = lambda r: "ok"
@@ -222,8 +223,7 @@ class TestMemoryMiddleware(unittest.TestCase):
         mw.wrap_model_call(_FakeRequest([HumanMessage(content="天气", id="u3")]), ok)
         self.assertEqual(mgr.calls, 0)  # query 变化不改 system
 
-    def test_none_memory_manager(self):
-        from agent.memory.middleware import MemoryMiddleware
+    def test_none_memory_manager(self, _config):
         mw = MemoryMiddleware(None, "BASE")
         captured = {}
         mw.wrap_model_call(_FakeRequest([HumanMessage(content="你好", id="u1")]),

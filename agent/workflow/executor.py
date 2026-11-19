@@ -29,6 +29,7 @@ class WorkflowExecutor:
     """有界 Worker 线程池：工作流分段在后台执行，主循环不阻塞。"""
 
     def __init__(self, pool_size: int = 4):
+        self.pool_size = max(1, pool_size)
         self._pool = ThreadPoolExecutor(
             max_workers=max(1, pool_size),
             thread_name_prefix="wf-worker",
@@ -37,6 +38,15 @@ class WorkflowExecutor:
     def submit(self, fn, *args, **kwargs):
         """提交一个工作流分段任务（非阻塞）。"""
         self._pool.submit(fn, *args, **kwargs)
+
+    def resize(self, pool_size):
+        pool_size = max(1, pool_size)
+        if pool_size == self.pool_size:
+            return
+        previous = self._pool
+        self._pool = ThreadPoolExecutor(max_workers=pool_size, thread_name_prefix="wf-worker")
+        self.pool_size = pool_size
+        previous.shutdown(wait=False, cancel_futures=False)
 
     def shutdown(self):
         """关闭线程池（不等任务完成）。"""

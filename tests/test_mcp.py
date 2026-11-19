@@ -3,22 +3,49 @@ import asyncio
 import base64
 import io
 import json
+import threading
+import time
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image as MCPImage
 from langchain_core.messages import ToolMessage
-from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import interrupt, Command
 from langgraph.errors import GraphInterrupt
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
+from mcp.types import (
+    AudioContent,
+    ElicitRequest,
+    ElicitRequestFormParams,
+    EmbeddedResource,
+    InputRequiredResult,
+    ResourceLink,
+    TextContent,
+    TextResourceContents,
+)
+from PIL import Image
 
-from agent.mcp.client import MCPConnection
-from agent.mcp.tools import MCPToolWrapper, create_protocol_tool
-from agent.questions import begin_question_turn, reset_question_turn, parse_terminal
 import dao.db as db
+from agent.mcp.client import MCPConnection
+from agent.mcp.manager import MCPManager
+from agent.mcp.tools import MCPToolWrapper
+from agent.media.images import REFS, adapt_messages
+from agent.questions import begin_question_turn, parse_terminal, reset_question_turn
+from dao.question import QuestionDAO
+
+
+@pytest.mark.parametrize("kind", ["http", "sse"])
+def test_transport_accepts_empty_saved_auth(kind):
+    connection = MCPConnection(
+        "demo", "https://example.com/mcp", {"X-Test": "credential"}, 10, 10, 20000,
+        options={"transport": kind, "auth": {}},
+    )
+    transport = connection._transport()
+    assert transport.auth is None
+    assert transport.headers["X-Test"] == "credential"
 
 
 @pytest.fixture
@@ -104,7 +131,6 @@ def test_binary_image_survives_official_conversion(connection):
 
 
 def test_mcp_images_checkpoint_refs_and_vision_toggle(connection, database):
-    from agent.media.images import adapt_messages, REFS
     token = begin_question_turn({'source': 'terminal'}, 'look', 'session')
     try:
         result = call(wrapper(connection, 'screenshot'))
@@ -122,7 +148,11 @@ def test_resources_and_prompts(connection):
     assert str(connection.protocol('list_resources')[0].uri) == 'test://greeting'
     assert connection.protocol('read_resource', {'uri': 'test://greeting'})[0].text == 'hello resource'
     assert connection.protocol('list_prompts')[0].name == 'greet'
-    result = call(create_protocol_tool(connection, 'mcp__demo__protocol'), {'operation': 'get_prompt',
+    manager = MCPManager.__new__(MCPManager)
+    manager.max_tools = 100
+    manager._connections = {connection.server_id: connection}
+    protocol = next(tool for tool in manager.get_langchain_tools() if tool.name == 'mcp__demo__protocol')
+    result = call(protocol, {'operation': 'get_prompt',
                       'arguments': {'name': 'greet', 'arguments': {'name': 'Ada'}}})
     assert 'hello Ada' in connection.render(result.content)
 
@@ -153,7 +183,6 @@ def test_redaction_and_text_limit(connection):
 def test_interrupt_crosses_thread_and_resumes_durably(connection, database):
     """Use the real worker/graph boundaries, independent of MCP server era."""
     from agent.mcp.elicitation import persist_interrupt, resume_value
-    from dao.question import QuestionDAO
     request = {'type': 'mcp_elicitation', 'tool_name': 'approval', 'requests': [
         {'key': 'answer', 'mode': 'form', 'message': 'Name?',
          'requested_schema': {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}}]}
@@ -188,7 +217,6 @@ def test_interrupt_crosses_thread_and_resumes_durably(connection, database):
 
 
 def test_manager_compatibility_and_statistics(connection, database, monkeypatch):
-    from agent.mcp.manager import MCPManager
     import agent.mcp.manager as module
     monkeypatch.setattr(module, 'get_global_config', lambda: SimpleNamespace(
         MCP_CONNECT_TIMEOUT=10, MCP_CALL_TIMEOUT=10, MCP_MAX_TOOLS=100, MCP_RESULT_MAX_CHARS=20000))
@@ -212,7 +240,6 @@ def test_manager_compatibility_and_statistics(connection, database, monkeypatch)
 
 
 def test_audio_and_embedded_resources_keep_standard_content():
-    from mcp.types import AudioContent, TextContent, EmbeddedResource, TextResourceContents, ResourceLink
     raw = SimpleNamespace(content=[AudioContent(type='audio', data='AA==', mime_type='audio/wav'),
         EmbeddedResource(type='resource', resource=TextResourceContents(uri='test://text', text='embedded')),
         ResourceLink(type='resource_link', uri='https://example.com/file', name='file', mime_type='application/pdf')],
@@ -239,14 +266,13 @@ def test_stdio_transport(tmp_path):
 def test_real_mcp_elicitation_round_trip(database):
     from fastmcp import Context
     from pydantic import BaseModel
-    from dao.question import QuestionDAO
+
     from agent.mcp.elicitation import resume_value
     class Name(BaseModel):
         name: str
     server = FastMCP('human')
     @server.tool
     async def approval(ctx: Context):
-        from mcp.types import InputRequiredResult, ElicitRequest, ElicitRequestFormParams
         if not ctx.input_responses:
             return InputRequiredResult(input_requests={'answer': ElicitRequest(params=ElicitRequestFormParams(
                 message='Your name?', requested_schema=Name.model_json_schema()))})
@@ -280,7 +306,6 @@ def http_server(tmp_path):
     import socket
     import subprocess
     import sys
-    import time
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -372,7 +397,6 @@ def test_disconnect_joins_worker_after_loop_closed():
 
 @pytest.mark.parametrize('server_count', [1, 2])
 def test_protocol_helpers_do_not_displace_existing_tools_at_cap(server_count):
-    from agent.mcp.manager import MCPManager
     from agent.mcp.client import ToolInfo
     manager = MCPManager.__new__(MCPManager)
     manager.max_tools = 100
@@ -385,3 +409,63 @@ def test_protocol_helpers_do_not_displace_existing_tools_at_cap(server_count):
     assert len(tools) == 100 * server_count
     assert sum(tool.name.startswith('mcp__first__') for tool in tools) == 100
     assert sum(tool.name.startswith('mcp__second__') for tool in tools) == 100 * (server_count - 1)
+
+
+def test_retire_connection_preserves_inflight_call():
+    server = FastMCP('retirement')
+    entered, release = threading.Event(), threading.Event()
+    @server.tool
+    async def wait_for_release():
+        entered.set()
+        await asyncio.to_thread(release.wait, 5)
+        return 'completed'
+    conn = MCPConnection('retire', '', {}, 15, 15, 20000, target=server)
+    assert conn.connect()[0]
+    results=[]
+    worker=threading.Thread(target=lambda:results.append(conn.call_tool('wait_for_release',{})))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        conn.retire()
+        assert conn._thread.is_alive()
+        assert conn.call_tool('wait_for_release',{}).startswith('❌')
+        release.set()
+        worker.join(5)
+        assert len(results)==1 and 'completed' in results[0] and not results[0].startswith('❌')
+        deadline=time.monotonic()+5
+        while conn._thread.is_alive() and time.monotonic()<deadline:
+            time.sleep(.05)
+        assert not conn._thread.is_alive()
+    finally:
+        release.set()
+        worker.join(5)
+        conn.disconnect()
+
+
+def test_reconfiguration_keeps_old_generation_until_new_connection_ready():
+
+    entered, release = threading.Event(), threading.Event()
+    old = MagicMock(status='connected')
+    new = MagicMock(status='connected', tools=[], protocol_version='test', server_info={})
+    def negotiate():
+        entered.set()
+        assert release.wait(5)
+        return True, ''
+    new.connect.side_effect = negotiate
+    manager = object.__new__(MCPManager)
+    manager.dao = MagicMock()
+    manager._connections = {'server':old}
+    manager._build_connection = lambda server:new
+    worker=threading.Thread(target=manager.connect,args=('server',),kwargs={'preserve_active':True})
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert manager._connections['server'] is old
+        old.retire.assert_not_called()
+        release.set()
+        worker.join(5)
+        assert manager._connections['server'] is new
+        old.retire.assert_called_once()
+    finally:
+        release.set()
+        worker.join(5)

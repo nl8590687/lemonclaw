@@ -43,9 +43,10 @@ class MainCliTest(unittest.TestCase):
         calls = []
         with (
             patch('config.get_global_config', side_effect=lambda: calls.append('config')),
+            patch('channels.webui.server.start', side_effect=lambda: calls.append('webui')),
             patch('loop.start_event_source', side_effect=lambda: calls.append('sources')),
             patch('loop.loop_forever', side_effect=lambda: calls.append('loop')),
         ):
             main([])
 
-        self.assertEqual(calls, ['config', 'sources', 'loop'])
+        self.assertEqual(calls, ['config', 'webui', 'sources', 'loop'])

@@ -49,7 +49,7 @@ class Node(SpecModel):
 
 
 class Edge(SpecModel):
-    src: str
+    src: str | list[str]
     dst: str
 
 
@@ -140,7 +140,8 @@ def validate_spec(raw: dict, builder, workflow_id: str, ancestors: tuple[str, ..
                 raise ValueError(f"nodes.{n.name}.config.sub_workflow_id: 子工作流不可用 {nc.sub_workflow_id}")
             validate_spec(child.spec, builder, child.workflow_id, (*ancestors, workflow_id))
     for i, e in enumerate(spec.edges):
-        if e.src not in ["START", *names] or e.dst not in ["END", *names]:
+        starts = e.src if isinstance(e.src, list) else [e.src]
+        if not starts or len(set(starts)) != len(starts) or any(src not in ["START", *names] for src in starts) or e.dst not in ["END", *names]:
             raise ValueError(f"edges.{i}: 悬空或非法边 {e.src}->{e.dst}")
     sources = set()
     for i, c in enumerate(spec.conditionals):

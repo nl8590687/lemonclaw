@@ -1,0 +1,11 @@
+import { createApp } from "vue";
+import ElementPlus from "element-plus";
+import "element-plus/dist/index.css";
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
+import "@vue-flow/minimap/dist/style.css";
+import { i18n } from "./i18n";
+import App from "./App.vue";
+import "./style.css";
+createApp(App).use(ElementPlus).use(i18n).mount("#app");

@@ -32,6 +32,7 @@ nav:
   - 部署与运行: zh/deployment.md
   - ⚙️ 配置: zh/configuration.md
   - 📡 通道: zh/channels.md
+  - WebUI: zh/webui.md
   - 图片输入: zh/images.md
   - 🛠️ 内置工具: zh/tools.md
   - 🧩 技能系统: zh/skills.md
@@ -51,6 +52,7 @@ nav:
   - Deployment: en/deployment.md
   - ⚙️ Configuration: en/configuration.md
   - 📡 Channels: en/channels.md
+  - WebUI: en/webui.md
   - Image input: en/images.md
   - 🛠️ Built-in Tools: en/tools.md
   - 🧩 Skills System: en/skills.md

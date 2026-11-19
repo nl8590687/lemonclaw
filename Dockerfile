@@ -1,6 +1,13 @@
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS node_runtime
 
+FROM node_runtime AS webui_builder
+WORKDIR /build/webui
+COPY webui/package.json webui/package-lock.json ./
+RUN npm ci
+COPY webui/ ./
+RUN npm run build
+
 FROM ubuntu:26.04
 ARG PYTHON_VERSION=3.14
 ARG LARK_CLI_VERSION=1.0.100
@@ -33,6 +40,7 @@ RUN uv venv .venv --python ${PYTHON_VERSION} --seed \
     && uv pip install --python .venv/bin/python -r requirements.txt -c constraints.txt
 
 COPY . /app
+COPY --from=webui_builder /build/webui/dist /app/webui/dist
 
 # 运行期：uv 直接复用 /app/.venv，--no-sync 保证不解析依赖、不下载、不重建
 # 工作目录保持 /root，使数据目录仍为 /root/.lemonclaw，兼容现有挂载方式

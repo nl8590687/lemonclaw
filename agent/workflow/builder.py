@@ -24,14 +24,14 @@ subagent 节点编译期构造 BaseSubAgent 实例并注册到 manager._subagent
 import logging
 from typing import Any
 
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateT
 
-from agent.workflow.state import build_state_schema, render_template
+from agent.workflow.control import check_control, controlled_node
 from agent.workflow.nodes import make_node
+from agent.workflow.state import build_state_schema, render_template
 from agent.workflow.subagents import GeneralSubAgent, get_subagent_class
-from agent.workflow.control import controlled_node, check_control
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ class WorkflowBuilder:
         # 1. state schema
         State = build_state_schema(state_fields)
         g = StateGraph(State)
+        track_status = getattr(self.manager, "use_run_snapshot", False) is True
 
         # 2. 节点
         for nd in nodes_spec:
@@ -84,13 +85,13 @@ class WorkflowBuilder:
             if nc.get("on_error") == "compensate":
                 output = nc.get("output_field", {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(kind, "output"))
                 compensation = make_node("tool", dict(nc["compensation"], output_field=output, max_retries=0), self.llm, self.tools, self.manager)
-            g.add_node(name, controlled_node(fn, policy, name, compensation))
+            g.add_node(name, controlled_node(fn, policy, name, compensation, track_status=track_status))
 
         # 3. 边
         for ed in edges_spec:
             src = ed.get("src", "")
             dst = ed.get("dst", "")
-            src = START if src == "START" else src
+            src = [START if item == "START" else item for item in src] if isinstance(src, list) else START if src == "START" else src
             dst = END if dst == "END" else dst
             g.add_edge(src, dst)
 
@@ -102,7 +103,7 @@ class WorkflowBuilder:
             # mapping 的 value 可能是 END
             resolved_mapping = {k: (END if v == "END" else v) for k, v in mapping.items()}
             router_fn = self._make_router(router_spec, list(resolved_mapping.keys()))
-            router = controlled_node(lambda state, config, fn=router_fn: fn(state), {}, f"{src}-router")
+            router = controlled_node(lambda state, config, fn=router_fn: fn(state), {}, f"{src}-router", track_status=track_status)
             g.add_conditional_edges(src, router, resolved_mapping)
 
         # 5. 编译

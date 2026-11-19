@@ -76,6 +76,7 @@ lemonclaw
 | 安装、部署或排障 | [快速开始](docs/zh/getting-started.md)、[部署](docs/zh/deployment.md)、[排障](docs/zh/troubleshooting.md) |
 | 连接飞书、处理图片或使用 CLI | [通道](docs/zh/channels.md)、[图片](docs/zh/images.md)、[飞书 CLI](docs/zh/feishu-cli.md) |
 | 配置模型和工具 | [配置](docs/zh/configuration.md)、[工具](docs/zh/tools.md) |
+| 浏览器界面 | [WebUI 构建、登录与管理](docs/zh/webui.md) |
 | 使用扩展和自动化 | [Skills](docs/zh/skills.md)、[MCP](docs/zh/mcp.md)、[工作流](docs/zh/workflows.md) |
 | 管理对话和任务 | [记忆](docs/zh/memory.md)、[命令](docs/zh/commands.md)、[人工确认](docs/zh/interaction.md) |
 | 贡献代码 | [贡献指南](docs/zh/contributing.md)、[架构](docs/zh/architecture.md) |

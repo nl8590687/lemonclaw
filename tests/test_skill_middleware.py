@@ -21,7 +21,7 @@ enable/disable 即时反映，以及独立的记忆工具读取边界。
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 
@@ -44,28 +44,32 @@ def _run(mw, query: str):
     return req.overridden.content
 
 
-class TestBackwardCompat(unittest.TestCase):
-    def test_skill_manager_none_keeps_base_without_memory(self):
+@patch("agent.memory.middleware.get_global_config", **{"return_value.ENABLE_SKILLS": False})
+class TestSkillsDisabled(unittest.TestCase):
+    def test_skill_manager_none_keeps_base_without_memory(self, _config):
         mm = MagicMock()
         mm.build_context.return_value = "MEM"
-        mw = MemoryMiddleware(mm, "BASE")  # 无 skill_manager
+        mw = MemoryMiddleware(mm, "BASE")
         content = _run(mw, "q")
         self.assertEqual(content, "BASE")
         mm.build_context.assert_not_called()
 
-    def test_no_managers_just_base(self):
+    def test_no_managers_just_base(self, _config):
         mw = MemoryMiddleware(None, "BASE")
         content = _run(mw, "q")
         self.assertEqual(content, "BASE")
 
 
+@patch("agent.memory.middleware.get_global_config", **{"return_value.ENABLE_SKILLS": True})
+@patch("agent.memory.middleware.get_skill_manager")
 class TestInjectionOrder(unittest.TestCase):
-    def test_summary_and_active_injected_in_order(self):
+    def test_summary_and_active_injected_in_order(self, get_manager, _config):
         mm = MagicMock(); mm.build_context.return_value = "MEM"
         sm = MagicMock()
         sm.get_skill_summary_text.return_value = "SUMMARY"
         sm.build_active_section.return_value = "ACTIVE"
-        mw = MemoryMiddleware(mm, "BASE", skill_manager=sm)
+        get_manager.return_value = sm
+        mw = MemoryMiddleware(mm, "BASE")
         content = _run(mw, "q")
         self.assertIn("BASE", content)
         self.assertIn("SUMMARY", content)
@@ -76,36 +80,56 @@ class TestInjectionOrder(unittest.TestCase):
         mm.build_context.assert_not_called()
 
 
+@patch("agent.memory.middleware.get_global_config", **{"return_value.ENABLE_SKILLS": True})
+@patch("agent.memory.middleware.get_skill_manager")
 class TestCacheSemantics(unittest.TestCase):
-    def test_active_section_fresh_each_turn(self):
+    def test_active_section_fresh_each_turn(self, get_manager, _config):
         # P2-7：同一 query 下 load_skill 后下一轮 build_active_section 返回新值，不被缓存
         mm = MagicMock(); mm.build_context.return_value = ""
         sm = MagicMock()
         sm.get_skill_summary_text.return_value = ""
         sm.build_active_section.side_effect = ["OLD", "NEW"]
-        mw = MemoryMiddleware(mm, "BASE", skill_manager=sm)
+        get_manager.return_value = sm
+        mw = MemoryMiddleware(mm, "BASE")
         self.assertIn("OLD", _run(mw, "q"))
         content2 = _run(mw, "q")
         self.assertIn("NEW", content2)
         self.assertNotIn("OLD", content2)
 
-    def test_summary_fresh_each_turn(self):
+    def test_summary_fresh_each_turn(self, get_manager, _config):
         # P1-3：enable/disable 后下一轮摘要现取新值
         mm = MagicMock(); mm.build_context.return_value = ""
         sm = MagicMock()
         sm.get_skill_summary_text.side_effect = ["BEFORE", "AFTER"]
         sm.build_active_section.return_value = ""
-        mw = MemoryMiddleware(mm, "BASE", skill_manager=sm)
+        get_manager.return_value = sm
+        mw = MemoryMiddleware(mm, "BASE")
         self.assertIn("BEFORE", _run(mw, "q"))
         self.assertIn("AFTER", _run(mw, "q"))
 
-    def test_memory_never_injected_for_any_query(self):
+    def test_skill_switch_updates_existing_middleware(self, get_manager, config):
+        get_manager.return_value.get_skill_summary_text.return_value = "SUMMARY"
+        get_manager.return_value.build_active_section.return_value = ""
+        mw = MemoryMiddleware(None, "BASE")
+
+        config.return_value.ENABLE_SKILLS = False
+        self.assertEqual(_run(mw, "q"), "BASE")
+        get_manager.assert_not_called()
+
+        config.return_value.ENABLE_SKILLS = True
+        self.assertEqual(_run(mw, "q"), "BASE\n\nSUMMARY")
+
+        config.return_value.ENABLE_SKILLS = False
+        self.assertEqual(_run(mw, "q"), "BASE")
+
+    def test_memory_never_injected_for_any_query(self, get_manager, _config):
         # 不同 query 共用技能注入流程，记忆由工具读取
         mm = MagicMock(); mm.build_context.return_value = "MEM"
         sm = MagicMock()
         sm.get_skill_summary_text.return_value = ""
         sm.build_active_section.return_value = ""
-        mw = MemoryMiddleware(mm, "BASE", skill_manager=sm)
+        get_manager.return_value = sm
+        mw = MemoryMiddleware(mm, "BASE")
         _run(mw, "q")
         _run(mw, "q")  # 同 query
         self.assertEqual(mm.build_context.call_count, 0)

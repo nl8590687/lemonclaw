@@ -27,12 +27,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from dao.workflow import Workflow, WorkflowRun, WorkflowDAO, ensure_workflow_schema
-from agent.workflow.builder import WorkflowBuilder
-from agent.workflow.runner import WorkflowRunner
-from agent.workflow.executor import WorkflowExecutor
-from agent.workflow.control import RunControl, _current
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
+from agent.workflow.builder import WorkflowBuilder
+from agent.workflow.control import RunControl, _current
+from agent.workflow.executor import WorkflowExecutor
+from agent.workflow.runner import WorkflowRunner
+from channels.webui import state as webui
+from dao.webui import WebStore
+from dao.workflow import Workflow, WorkflowDAO, WorkflowRun, ensure_workflow_schema
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,38 @@ class WorkflowManager:
         if wf is None:
             return None
         return self._get_graph(wf)
+
+    def _snapshot(self, wf):
+        definitions = {}
+        def collect(item):
+            if item.workflow_id in definitions:
+                return
+            definitions[item.workflow_id] = item.to_dict()
+            for node in item.spec.get('nodes', []):
+                child_id = node.get('config', {}).get('sub_workflow_id')
+                if child_id:
+                    child = self.get_workflow(child_id)
+                    if child:
+                        collect(child)
+        collect(wf)
+        return dict(wf.to_dict(), definitions=definitions)
+
+    def _snapshot_graph(self, snapshot):
+        owner = self
+        definitions = snapshot.get('definitions') or {snapshot['workflow_id']: snapshot}
+        class SnapshotManager:
+            use_run_snapshot = True
+            def __getattr__(self, name):
+                return getattr(owner, name)
+            def get_workflow(self, workflow_id):
+                data = definitions.get(workflow_id)
+                return Workflow(**{k: v for k, v in data.items() if k in Workflow.__dataclass_fields__}) if data else None
+            def _get_graph_by_id(self, workflow_id):
+                wf = self.get_workflow(workflow_id)
+                if not wf:
+                    return None
+                return WorkflowBuilder(owner.llm, owner._get_tools_dict(), owner.checkpointer, self).compile(wf)
+        return SnapshotManager()._get_graph_by_id(snapshot['workflow_id'])
 
     # ---- Workflow CRUD ----
 
@@ -187,7 +221,8 @@ class WorkflowManager:
         if wf.last_error:
             return None, {"error": f"工作流编译失败: {wf.last_error}"}
         try:
-            graph = self._get_graph(wf)
+            snapshot = self._snapshot(wf) if webui.enabled or (context or {}).get("source") == "webui" else None
+            graph = self._snapshot_graph(snapshot) if snapshot else self._get_graph(wf)
         except Exception as ex:
             return None, {"error": f"编译失败: {ex}"}
 
@@ -197,6 +232,8 @@ class WorkflowManager:
             status="running", input=input or {}, origin_context=context or {},
         )
         self.dao.create_run(run)
+        if snapshot:
+            WebStore().layout('run:' + run_id, snapshot)
 
         self.executor.submit(self._run_invoke_task, graph, run_id, wf.workflow_id, input or {}, context or {})
         return run_id, {"status": "running"}
@@ -208,10 +245,14 @@ class WorkflowManager:
         if run.status != "paused":
             return {"error": f"run 状态为 {run.status}，非 paused，无法续跑"}
         wf = self.dao.get_workflow(run.workflow_id)
+        snapshot = WebStore().layout('run:' + run_id)
+        if wf is not None and snapshot:
+            wf.spec = snapshot['spec']
+            wf.version = run.workflow_version
         if wf is None:
             return {"error": "工作流不存在"}
         try:
-            graph = self._get_graph(wf)
+            graph = self._snapshot_graph(snapshot) if snapshot else self._get_graph(wf)
         except Exception as ex:
             return {"error": f"编译失败: {ex}"}
 

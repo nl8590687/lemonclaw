@@ -18,34 +18,46 @@ AI Agent Core Implements
 
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
-from agent.checkpoint import PersistentSaver
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
-from langgraph.types import Command
-from dao.question import QuestionDAO
-from agent.questions import (pending_question, parse_terminal, actor_matches, terminal_question,
-                             begin_question_turn, reset_question_turn)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
-from agent.history import protected_boundary, trim_oversized
+from langgraph.types import Command
 
-from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
+from agent.callback import StreamingCallback
+from agent.checkpoint import PersistentSaver
+from agent.context_agent import ContextAgent
+from agent.history import protected_boundary, trim_oversized
+from agent.llm import BASE_SYSTEM_PROMPT, create_openai_llm, get_system_prompt
+from agent.mcp import get_mcp_manager
+from agent.memory import MemoryMiddleware, get_memory_manager
+from agent.questions import (
+    actor_matches,
+    begin_question_turn,
+    parse_terminal,
+    pending_question,
+    reset_question_turn,
+    terminal_question,
+)
+from agent.runtime_middleware import RuntimeConfigurationMiddleware
+from agent.skill import get_skill_manager
 from agent.tools import create_tool_list
-from agent.tools.question_tool import QuestionCallGuard
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 from agent.tools.network_guard import begin_user_turn, reset_user_turn
-from agent.tools.notification_tool import begin_notifications, reset_notifications, TurnCompletionMiddleware
-from agent.callback import StreamingCallback
-from agent.context_agent import ContextAgent
-from agent.memory import get_memory_manager, MemoryMiddleware
-from agent.skill import get_skill_manager
-from agent.mcp import get_mcp_manager
+from agent.tools.notification_tool import TurnCompletionMiddleware, begin_notifications, reset_notifications
+from agent.tools.question_tool import QuestionCallGuard
 from agent.workflow import get_workflow_manager
 from agent.workflow.context import origin_context
+from channels.device import feishu
 from channels.out import BaseOutChannel, build_output_channel
+from channels.out.fanout import FanoutOutputChannel
+from channels.out.stdout import TerminalOutputChannel
+from channels.webui import state as web_state
+from channels.webui.server import available
 from config import get_global_config
 from dao.memory import CoreMemory
+from dao.question import QuestionDAO
 
 
 def _create_agent(llm: BaseChatModel, tools: dict[str, Any], system_prompt: SystemMessage | str, checkpointer, middleware=None):
@@ -217,7 +229,7 @@ class AgentService:
             reset_user_turn(turn_token)
         if resume_row:
             self.questions.finish(resume_row['question_id'])
-            self._close_question(resume_row)
+            self._close_question(resume_row, out_chan)
         if selected:
             from dao.attachment import AttachmentDAO
             AttachmentDAO().mark(selected, context, "selected")
@@ -290,11 +302,24 @@ class AgentService:
             self.memory.on_messages(result.get("messages", []))
         return result
 
-    def _close_question(self, row):
-        if row['origin'].get('source') == 'feishu':
+    @staticmethod
+    def _terminal_channel(out_chan):
+        if isinstance(out_chan, FanoutOutputChannel):
+            return next((channel for channel in out_chan.channels if isinstance(channel, TerminalOutputChannel)), None)
+        return out_chan
+
+    def _close_question(self, row, out_chan=None):
+        if web_state.enabled or row['origin'].get('source') == 'webui':
+            terminal = self._terminal_channel(out_chan or self.default_out_chan)
+            status = {'confirmed': '已确认', 'cancelled': '已取消', 'timeout': '已超时'}.get(row['status'])
+            if terminal is not None and status:
+                try:
+                    terminal.write_message(f"问题 {row['question_id']} {status}。", row['origin'])
+                except Exception:
+                    pass  # 终端输出失败不影响持久的结束状态。
+        if row.get('message_id'):
             try:
-                from channels.device.feishu import get_feishu_client
-                client = get_feishu_client()
+                client = feishu.get_feishu_client()
                 if client is not None:
                     client.sender.close_question(row)
             except Exception:
@@ -304,21 +329,24 @@ class AgentService:
         if row['presented'] and not force:
             return
         try:
-            if row['origin'].get('source') == 'feishu':
-                from channels.device.feishu import get_feishu_client
-                client = get_feishu_client()
+            web_active = getattr(web_state, 'enabled', False)
+            feishu_allowed = not web_active or getattr(get_global_config(), 'ENABLE_FEISHU', False)
+            owner = feishu.get_feishu_owner_open_id() if web_active and feishu_allowed else None
+            send_feishu = feishu_allowed and (row['origin'].get('source') == 'feishu' or owner)
+            if web_active or not send_feishu:
+                terminal = self._terminal_channel(out_chan)
+                if terminal is not None:
+                    terminal.write_message(terminal_question(row), row['origin'])
+                elif not send_feishu:
+                    raise ValueError('终端输出不可用')
+            message_id = row.get('message_id')
+            if send_feishu:
+                client = feishu.get_feishu_client()
                 if client is None:
                     raise ValueError('飞书机器人未连接')
-                message_id = client.sender.send_question(row)
-                self.questions.present(row['question_id'], message_id)
-            else:
-                from channels.out.fanout import FanoutOutputChannel
-                from channels.out.stdout import TerminalOutputChannel
-                channel = next((c for c in out_chan.channels if isinstance(c, TerminalOutputChannel)), None) if isinstance(out_chan, FanoutOutputChannel) else out_chan
-                if channel is None:
-                    raise ValueError('终端输出不可用')
-                channel.write_message(terminal_question(row), row['origin'])
-                self.questions.present(row['question_id'])
+                target_row = dict(row, origin=dict(row['origin'], open_id=owner)) if owner and row['origin'].get('source') != 'feishu' else row
+                message_id = client.sender.send_question(target_row)
+            self.questions.present(row['question_id'], message_id)
         except Exception:
             out_chan.write_system_error('人工确认问题发送失败；仍会按时超时取消。可在原入口输入 /question 重发。')
 
@@ -382,15 +410,17 @@ class AgentService:
 
     def _build_middleware(self) -> list:
         """构造上下文中间件并刷新 self._middleware 引用。
-        记忆或技能任一开启 -> 挂载 MemoryMiddleware（base_prompt 固定 BASE_SYSTEM_PROMPT，
-        技能摘要与活跃全文由中间件每轮现取）；两者均关 -> 返回 []。"""
-        need_mw = bool(self.memory or self.skill_manager)
+        记忆、技能或 WebUI 热更新开启时挂载 MemoryMiddleware。
+        技能开关、摘要与活跃全文由中间件在每次模型调用前读取。"""
+        live_config = getattr(get_global_config(), "ENABLE_WEBUI", False) and available()
+        need_mw = bool(self.memory or self.skill_manager or live_config)
+        live = [RuntimeConfigurationMiddleware()] if live_config else []
         if not need_mw:
             self._middleware = None
-            return []
-        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT, skill_manager=self.skill_manager)]
+            return live
+        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT)]
         self._middleware = mw[0]
-        return mw
+        return live + mw
 
     def _thread_config(self) -> dict:
         return {"configurable": {"thread_id": f"session:{self.session_id}"}}

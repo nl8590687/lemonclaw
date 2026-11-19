@@ -40,10 +40,18 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langchain_core.messages import AIMessage
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    CallBackCard,
+    CallBackToast,
+    P2CardActionTriggerResponse,
+)
 
+from channels.webui import state
 from config import get_global_config
 from dao import delete_state, get_or_set_state, get_state, set_state
-
+from dao.attachment import AttachmentDAO
+from dao.db import get_connection
+from dao.question import QuestionDAO
 
 # ---- lark_oapi 是可选依赖 ----
 try:
@@ -52,6 +60,8 @@ try:
         CreateMessageRequest,
         CreateMessageRequestBody,
         CreateMessageResponse,
+        PatchMessageRequest,
+        PatchMessageRequestBody,
     )
     HAS_LARK = True
 except ImportError:  # pragma: no cover - 缺包时占位
@@ -65,6 +75,8 @@ except ImportError:  # pragma: no cover - 缺包时占位
 _LARK_MISSING_MSG = (
     "lark-oapi 未安装，飞书功能不可用。请执行: pip install lark-oapi"
 )
+_MESSAGE_UPDATE_EXPIRED = 230031
+_QUESTION_CARD_EXPIRED = "expired"
 
 
 # 飞书文件上传 file_type 取值（以飞书开放平台文件上传接口为准）
@@ -194,14 +206,27 @@ class FeishuMessageSender:
         if not row.get('message_id'):
             return
         try:
-            from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+            state_key = 'question.card.' + row['question_id']
+            synced_status = get_state(state_key)
+            if synced_status == _QUESTION_CARD_EXPIRED:
+                return False
+            if synced_status == row['status']:
+                return True
             request = PatchMessageRequest.builder().message_id(row['message_id']).request_body(
                 PatchMessageRequestBody.builder().content(json.dumps(question_closed_card(row), ensure_ascii=False)).build()).build()
             response = self.client.im.v1.message.patch(request)
-            if not response.success():
-                lark.logger.warning('人工确认卡片状态更新失败')
-        except Exception:
-            lark.logger.warning('人工确认卡片状态更新失败')
+            if response.success():
+                set_state(state_key, row['status'])
+                return True
+            if response.code == _MESSAGE_UPDATE_EXPIRED:
+                set_state(state_key, _QUESTION_CARD_EXPIRED)
+            lark.logger.warning(
+                f'人工确认卡片状态更新失败: code={response.code}, msg={response.msg}, log_id={response.get_log_id()}'
+            )
+            return False
+        except Exception as exc:
+            lark.logger.warning(f'人工确认卡片状态更新异常: {type(exc).__name__}: {exc}')
+            return False
 
     def add_reaction(self, message_id: str, emoji_type: str) -> str | None:
         """以当前机器人身份添加消息表情，返回可用于撤销的 reaction_id。"""
@@ -791,7 +816,6 @@ class FeishuClient:
             }
 
             from agent.media.images import register_image
-            from dao.attachment import AttachmentDAO
             registered = []
             for index, attachment in enumerate(attachments):
                 if attachment.get('type') == 'image' and attachment.get('path'):
@@ -878,7 +902,6 @@ class FeishuClient:
 
     def _quoted_images(self, parent_id, context):
         """解析用户显式引用的图片消息，先查本地登记再按消息 ID 获取。"""
-        from dao.attachment import AttachmentDAO
         from agent.media.images import register_image
         dao = AttachmentDAO()
         items = dao.for_message(parent_id, context)
@@ -905,9 +928,7 @@ class FeishuClient:
                 for i, key in enumerate(keys)]
 
     def _handle_question_action(self, data):
-        from lark_oapi.event.callback.model.p2_card_action_trigger import (
-            P2CardActionTriggerResponse, CallBackToast, CallBackCard)
-        from dao.question import QuestionDAO
+
         from agent.questions import actor_matches, validate_answers
         response = P2CardActionTriggerResponse()
         try:
@@ -1014,7 +1035,7 @@ def get_feishu_client() -> FeishuClient | None:
     return _feishu_client
 
 
-def set_feishu_client(client: FeishuClient) -> None:
+def set_feishu_client(client: FeishuClient | None) -> None:
     """设置全局飞书客户端实例"""
     global _feishu_client
     with _feishu_lock:
@@ -1197,3 +1218,36 @@ def markdown_reply_cards(text: str, event_type: object = None):
         suffix = '\n' + after[0] if after else ''
         yield card(prefix + chunk + suffix, part)
         offset, state, part = end, after, part + 1
+
+
+def sync_owner_question(row):
+    """Retry closed-card display without resubmitting the stored answer."""
+    if not row or row['status'] == 'pending' or not row.get('message_id'):
+        return
+    client = get_feishu_client()
+    if client is not None:
+        client.sender.close_question(row)
+
+
+_question_sync_lock = threading.Lock()
+
+
+def sync_pending_owner_questions():
+    if not _question_sync_lock.acquire(blocking=False):
+        return
+    def work():
+        try:
+            _sync_pending_owner_questions()
+        finally:
+            _question_sync_lock.release()
+    threading.Thread(target=work, daemon=True, name="question-card-sync").start()
+
+
+def _sync_pending_owner_questions():
+    if not getattr(state, 'enabled', False):
+        return
+    store = QuestionDAO()
+    with get_connection() as conn:
+        ids = [r[0] for r in conn.execute("SELECT question_id FROM user_questions WHERE status!='pending' AND message_id IS NOT NULL ORDER BY deadline DESC LIMIT 100")]
+    for qid in ids:
+        sync_owner_question(store.get(qid))

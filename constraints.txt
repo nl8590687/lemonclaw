@@ -108,3 +108,5 @@ starlette==1.10.0
 uncalled-for==0.6.0
 uvicorn==0.54.0
 watchfiles==1.3.0
+fastapi==0.163.1
+annotated-doc==0.0.6

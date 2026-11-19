@@ -14,7 +14,7 @@
 
 from langchain_openai import ChatOpenAI
 
-from config import get_global_config
+from config import get_global_config, runtime
 
 
 def create_openai_llm() -> ChatOpenAI:
@@ -52,4 +52,5 @@ def create_openai_llm() -> ChatOpenAI:
                               if global_config.LLM_FALLBACK_API_KEY.get_secret_value()
                               else global_config.OPENAI_API_KEY)
         llm._fallback = ChatOpenAI(**options)
+    llm._runtime_revision = runtime.revision
     return llm

@@ -1,12 +1,16 @@
 """工作流运行控制：协作取消、节点期限和失败重试。"""
 
 import contextvars
+import json
 import queue
 import threading
 import time
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphBubbleUp
+
+from dao.db import get_connection
+from dao.webui import WebStore
 
 
 class WorkflowStopped(BaseException):
@@ -74,10 +78,26 @@ class ControlCallback(BaseCallbackHandler):
         self.control.check()
 
 
-def controlled_node(fn, nc, name, compensation=None):
+def controlled_node(fn, nc, name, compensation=None, *, track_status=False):
     """每次仅重试当前失败节点；已完成节点由图的 checkpoint 保留。"""
     def run(state, config=None):
         parent = current_control()
+        run_id = (config or {}).get('configurable', {}).get('thread_id') if track_status else None
+        if run_id:
+            run_id = run_id.removeprefix('workflow:').split('|')[0]
+        def report(status):
+            if not run_id:
+                return
+            with get_connection() as c:
+                c.execute('BEGIN IMMEDIATE')
+                row = c.execute('SELECT data FROM webui_layouts WHERE id=?', ('nodes:' + run_id,)).fetchone()
+                data = json.loads(row[0]) if row else {}
+                data[name] = {'status': status, 'time': time.time()}
+                c.execute('INSERT OR REPLACE INTO webui_layouts VALUES(?,?)', ('nodes:' + run_id, json.dumps(data)))
+        # Ensure persistence tables exist before entering the write transaction.
+        if run_id:
+            WebStore()
+        report('running')
         for attempt in range(nc.get("max_retries", 0) + 1):
             if parent:
                 parent.check()
@@ -111,19 +131,26 @@ def controlled_node(fn, nc, name, compensation=None):
                         continue
                 control.check()
                 if success:
+                    report("completed")
                     return value
                 # GraphInterrupt 等 BaseException 必须交还 LangGraph 处理。
                 if isinstance(value, GraphBubbleUp) or not isinstance(value, Exception):
                     raise value
                 raise value
             except GraphBubbleUp:
+                report("paused")
                 raise
             except NodeTimeout as ex:
+                report("failed")
                 if parent:
                     parent.fail(ex)
                 # 超时调用可能已经产生副作用，禁止重试或补偿重放。
                 raise
+            except WorkflowStopped:
+                report("cancelled")
+                raise
             except Exception as ex:
+                report("failed")
                 if attempt < nc.get("max_retries", 0):
                     end = time.monotonic() + nc.get("retry_backoff", 1) * (2 ** attempt)
                     while time.monotonic() < end:
@@ -132,7 +159,7 @@ def controlled_node(fn, nc, name, compensation=None):
                         time.sleep(min(0.05, max(0, end - time.monotonic())))
                     continue
                 if nc.get("on_error") == "compensate" and compensation:
-                    return controlled_node(compensation, {"timeout_seconds": nc.get("timeout_seconds", 300)}, name + "-compensate")(state, config)
+                    return controlled_node(compensation, {"timeout_seconds": nc.get("timeout_seconds", 300)}, name + "-compensate", track_status=track_status)(state, config)
                 if nc.get("on_error", "fail") == "continue":
                     output = nc.get("output_field", {"human": "user_input", "subagent": "agent_reply", "main_agent": "agent_reply"}.get(nc.get("kind"), "output"))
                     return {output: f"❌ 节点 {name} 执行出错: {ex}"}

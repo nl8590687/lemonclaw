@@ -18,6 +18,7 @@ Event Enums
 
 import enum
 
+
 class EventType(enum.Enum):
     """
     事件类型枚举
@@ -27,6 +28,7 @@ class EventType(enum.Enum):
     WEBHOOK = "webhook"              # WebHook 回调
     SYSTEM = "system"                # 系统内部事件
     LARK_MESSAGE = "lark_message"    # 飞书消息
+    WEBUI = "webui"
     CUSTOM = "custom"                # 自定义扩展事件
     LANGGRAPH_LOOP = "langgraph_loop"  # 工作流回路事件（普通消息事件，走 agent.run，loop_forever 零改动）
 
