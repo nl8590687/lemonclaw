@@ -24,18 +24,13 @@ from config import get_global_config
 class MemoryMiddleware(AgentMiddleware):
     """每次模型调用前注入技能目录和活跃技能全文。"""
 
-    def __init__(self, memory_manager, base_prompt: str, skill_manager=None, *, live_config=False):
-        self.live_config = live_config
+    def __init__(self, memory_manager, base_prompt: str):
         self.memory_manager = memory_manager
-        self.skill_manager = skill_manager
         self.base_prompt = base_prompt            # 固定为 BASE_SYSTEM_PROMPT
 
     def wrap_model_call(self, request, handler):
         # 技能摘要 + 活跃全文：每轮现算（不缓存）--本回合 load_skill/unload_skill/enable/disable 会改变
-        manager = self.skill_manager
-        if self.live_config:
-            cfg = get_global_config()
-            manager = get_skill_manager() if cfg.ENABLE_SKILLS else None
+        manager = get_skill_manager() if get_global_config().ENABLE_SKILLS else None
         skill_summary = manager.get_skill_summary_text() if manager else ""
         active_section = manager.build_active_section() if manager else ""
         content = self.base_prompt

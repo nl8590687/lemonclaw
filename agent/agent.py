@@ -410,16 +410,15 @@ class AgentService:
 
     def _build_middleware(self) -> list:
         """构造上下文中间件并刷新 self._middleware 引用。
-        记忆或技能任一开启 -> 挂载 MemoryMiddleware（base_prompt 固定 BASE_SYSTEM_PROMPT，
-        技能摘要与活跃全文由中间件每轮现取）；两者均关 -> 返回 []。"""
+        记忆、技能或 WebUI 热更新开启时挂载 MemoryMiddleware。
+        技能开关、摘要与活跃全文由中间件在每次模型调用前读取。"""
         live_config = getattr(get_global_config(), "ENABLE_WEBUI", False) and available()
         need_mw = bool(self.memory or self.skill_manager or live_config)
         live = [RuntimeConfigurationMiddleware()] if live_config else []
         if not need_mw:
             self._middleware = None
             return live
-        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT, skill_manager=self.skill_manager,
-                               live_config=live_config)]
+        mw = [MemoryMiddleware(self.memory, BASE_SYSTEM_PROMPT)]
         self._middleware = mw[0]
         return live + mw
 

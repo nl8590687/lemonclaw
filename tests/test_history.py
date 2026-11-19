@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 
 from agent.history import protected_boundary, trim_oversized
+from agent.memory.middleware import MemoryMiddleware
 from tests.test_checkpoint import make_service, database  # noqa: F401
 
 
@@ -134,7 +135,6 @@ def test_recent_oversized_results_remain_intact(database):
 
 
 def test_memory_is_real_tool_result_and_not_in_system(database):
-    from agent.memory.middleware import MemoryMiddleware
     from agent.tools.memory_tool import RecallMemoryTool
     memory = MagicMock()
     memory.search.return_value = [(MagicMock(id=1, chunk_type='fact', importance=5,
@@ -149,7 +149,8 @@ def test_memory_is_real_tool_result_and_not_in_system(database):
         assert len(outputs) == 1 and outputs[0].tool_call_id == 'recall1'
         assert '仅在工具结果中可见' in outputs[0].content
         request = MagicMock(messages=[HumanMessage(content='记忆')])
-        MemoryMiddleware(memory, 'BASE').wrap_model_call(request, lambda value: value)
+        with patch("agent.memory.middleware.get_global_config", **{"return_value.ENABLE_SKILLS": False}):
+            MemoryMiddleware(memory, 'BASE').wrap_model_call(request, lambda value: value)
         assert request.override.call_args.kwargs['system_message'] == SystemMessage(content='BASE')
         memory.build_context.assert_not_called()
     finally:
