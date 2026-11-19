@@ -6,11 +6,20 @@
     "Segoe UI",
     "PingFang SC",
     sans-serif;
-  color: #26332c;
+  color: #26394c;
   background: #fff;
-  --el-color-primary: #34835d;
-  --el-color-primary-light-3: #69a184;
-  --el-color-primary-light-9: #edf6f0;
+  --sky-surface: #f4faff;
+  --sky-selected: #def0ff;
+  --sky-border: #deebf5;
+  --sky-shadow: #193b5810;
+  --muted-text: #566d82;
+  --el-color-primary: #236b9e;
+  --el-color-primary-dark-2: #1b567f;
+  --el-color-primary-light-3: #2e76a9;
+  --el-color-primary-light-5: #75b1d8;
+  --el-color-primary-light-7: #b0d5ef;
+  --el-color-primary-light-8: #d5eafb;
+  --el-color-primary-light-9: #edf7ff;
   --el-border-radius-base: 8px;
 }
 * {
@@ -28,14 +37,14 @@ button {
   cursor: pointer;
 }
 a {
-  color: #34835d;
+  color: var(--el-color-primary);
 }
 pre {
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 500px;
   overflow: auto;
-  background: #f5f7f6;
+  background: #f3f8fc;
   border-radius: 8px;
   padding: 14px;
   font-size: 12px;
@@ -56,7 +65,7 @@ h3 {
 }
 .muted,
 small {
-  color: #7b8780;
+  color: var(--muted-text);
   font-size: 12px;
 }
 .toolbar {
@@ -80,8 +89,8 @@ small {
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  background: #e5f1e6;
-  color: #347446;
+  background: var(--sky-selected);
+  color: #245d8a;
   display: grid;
   place-items: center;
   font-size: 22px;
@@ -101,8 +110,8 @@ small {
 .sidebar {
   width: 232px;
   flex-shrink: 0;
-  background: #f7f9f7;
-  border-right: 1px solid #e8eee9;
+  background: var(--sky-surface);
+  border-right: 1px solid var(--sky-border);
   padding: 27px 18px;
   position: fixed;
   inset: 0 auto 0 0;
@@ -112,7 +121,7 @@ small {
 }
 .sidebar-note {
   font-size: 11px;
-  color: #87968b;
+  color: var(--muted-text);
   margin: 15px 0 28px;
 }
 nav {
@@ -128,17 +137,17 @@ nav button {
   gap: 12px;
   padding: 13px;
   border-radius: 9px;
-  color: #6d7b72;
+  color: #4e6479;
   text-align: left;
   font-size: 14px;
 }
 nav button.active {
-  background: #e5eee7;
-  color: #23613b;
+  background: var(--sky-selected);
+  color: #205786;
   font-weight: 600;
 }
-nav button:hover {
-  background: #edf1ed;
+nav button:not(.active):hover {
+  background: var(--el-color-primary-light-9);
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -153,7 +162,7 @@ main {
 header {
   height: 66px;
   padding: 0 32px;
-  border-bottom: 1px solid #edf0ed;
+  border-bottom: 1px solid var(--sky-border);
   display: flex;
   align-items: center;
   gap: 16px;
@@ -169,17 +178,17 @@ header {
   gap: 7px;
   align-items: center;
   font-size: 12px;
-  color: #7b8b80;
+  color: var(--muted-text);
 }
 .status i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #a3b7a6;
+  background: #8ca4ba;
 }
 .status i.working {
-  background: #43a26a;
-  box-shadow: 0 0 0 4px #eaf5ee;
+  background: #3f8fc3;
+  box-shadow: 0 0 0 4px var(--sky-selected);
 }
 .mobile-toggle {
   display: none !important;
@@ -206,7 +215,7 @@ header {
 .chat-intro {
   margin: 0 0 36px;
   padding-bottom: 22px;
-  border-bottom: 1px solid #eef1ee;
+  border-bottom: 1px solid var(--sky-border);
 }
 .chat-intro h1 {
   font-size: 22px;
@@ -214,7 +223,7 @@ header {
 }
 .chat-intro p {
   font-size: 12px;
-  color: #8b968e;
+  color: var(--muted-text);
 }
 .message {
   display: flex;
@@ -222,7 +231,7 @@ header {
   margin: 24px 0;
 }
 .avatar {
-  background: #eaf2eb;
+  background: var(--sky-selected);
   border-radius: 9px;
   width: 30px;
   height: 30px;
@@ -231,11 +240,11 @@ header {
   place-items: center;
   font-size: 12px;
   font-weight: 650;
-  color: #487253;
+  color: #315e81;
 }
 .message.human .avatar {
-  background: #f1f2f1;
-  color: #849087;
+  background: #edf1f5;
+  color: var(--muted-text);
 }
 .message-body {
   min-width: 0;
@@ -268,14 +277,14 @@ header {
 .markdown td,
 .markdown th {
   padding: 8px;
-  border: 1px solid #e7ede8;
+  border: 1px solid var(--sky-border);
 }
 .markdown pre {
   margin-top: 10px;
 }
 .composer {
-  border: 1px solid #dfe8e1;
-  box-shadow: 0 4px 20px #233e2710;
+  border: 1px solid var(--sky-border);
+  box-shadow: 0 4px 20px var(--sky-shadow);
   border-radius: 14px;
   padding: 12px;
   background: white;
@@ -298,9 +307,9 @@ header {
 }
 .question-card {
   padding: 22px;
-  border: 1px solid #d7e8dc;
+  border: 1px solid #cfe4f5;
   border-radius: 12px;
-  background: #f6fbf7;
+  background: var(--sky-surface);
   margin: 20px 0;
 }
 .question-card .el-select {
@@ -314,7 +323,7 @@ header {
 }
 .setting {
   padding: 18px 0;
-  border-bottom: 1px solid #edf0ed;
+  border-bottom: 1px solid var(--sky-border);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -333,35 +342,35 @@ header {
   align-items: center;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px solid #edf0ed;
+  border-bottom: 1px solid var(--sky-border);
   flex-wrap: wrap;
 }
 .list-row code {
   flex: 1;
 }
 .resource-card {
-  border: 1px solid #e4eae5;
+  border: 1px solid var(--sky-border);
   border-radius: 12px;
   padding: 20px;
   margin: 14px 0;
 }
 .resource-card p {
   font-size: 13px;
-  color: #7d8b82;
+  color: var(--muted-text);
   overflow-wrap: anywhere;
 }
 .login-page {
   min-height: 100dvh;
-  background: #f8faf8;
+  background: var(--sky-surface);
   display: grid;
   place-items: center;
   padding: 20px;
 }
 .login-card {
   background: white;
-  border: 1px solid #e4ece5;
+  border: 1px solid var(--sky-border);
   border-radius: 18px;
-  box-shadow: 0 18px 60px #203e2610;
+  box-shadow: 0 18px 60px var(--sky-shadow);
   padding: 38px;
   width: min(390px, 100%);
   display: grid;
@@ -372,12 +381,12 @@ header {
 }
 .login-card p {
   font-size: 13px;
-  color: #87938b;
+  color: var(--muted-text);
   margin: 0;
 }
 .workflow-shell {
   display: flex;
-  border: 1px solid #e4eae5;
+  border: 1px solid var(--sky-border);
   border-radius: 12px;
   overflow: hidden;
   min-height: 640px;
@@ -385,9 +394,9 @@ header {
 .workflow-list {
   width: 180px;
   flex-shrink: 0;
-  border-right: 1px solid #e7ece8;
+  border-right: 1px solid var(--sky-border);
   padding: 10px;
-  background: #fafcfb;
+  background: var(--sky-surface);
 }
 .workflow-list button {
   display: block;
@@ -397,10 +406,10 @@ header {
   border: 0;
   padding: 12px;
   border-radius: 8px;
-  color: #516859;
+  color: #365671;
 }
 .workflow-list button.selected {
-  background: #e9f3eb;
+  background: var(--sky-selected);
 }
 .workflow-list small {
   display: block;
@@ -413,19 +422,20 @@ header {
 }
 .canvas {
   height: 540px;
-  border: 1px solid #edf0ed;
+  background: var(--sky-surface);
+  border: 1px solid var(--sky-border);
   border-radius: 8px;
   overflow: hidden;
 }
 .vue-flow__node {
   font-size: 12px;
   min-width: 140px;
-  border: 1px solid #cbdccd;
+  border: 1px solid #c1d9ec;
   border-radius: 10px !important;
-  box-shadow: 0 4px 12px #203e2610;
+  box-shadow: 0 4px 12px var(--sky-shadow);
 }
 .vue-flow__node.selected {
-  border: 2px solid #39845b !important;
+  border: 2px solid var(--el-color-primary) !important;
 }
 .mobile-nodes {
   display: flex;
@@ -496,7 +506,7 @@ header {
   .workflow-list {
     width: auto;
     border-right: 0;
-    border-bottom: 1px solid #e7ece8;
+    border-bottom: 1px solid var(--sky-border);
     display: flex;
     overflow: auto;
     max-height: 110px;
