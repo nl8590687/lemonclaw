@@ -10,6 +10,7 @@ const props = defineProps<{ kind: string }>(),
   dialog = ref(false),
   draft = ref<any>({}),
   json = ref(""),
+  mcpJsonFields = ref<Record<string, string>>({}),
   id = ref(""),
   revision = ref(""),
   query = ref(""),
@@ -45,6 +46,7 @@ async function load() {
   }
 }
 function edit(row?: any) {
+  mcpJsonFields.value = {};
   id.value = row ? itemId(row) : "";
   draft.value = JSON.parse(JSON.stringify(row || {}));
   if (props.kind === "mcp") {
@@ -76,22 +78,39 @@ function mcpValue(k: string) {
     return "";
   }
 }
+function isMcpJsonField(k: string) {
+  return ["args", "headers", "env"].includes(k);
+}
 function mcpSet(k: string, v: any) {
+  const isJson = isMcpJsonField(k);
+  if (isJson) mcpJsonFields.value[k] = v;
   try {
     const config = JSON.parse(json.value);
-    config[k] = ["args", "headers", "env"].includes(k)
-      ? JSON.parse(v || (["args"].includes(k) ? "[]" : "{}"))
-      : v;
+    config[k] = isJson ? parseMcpField(k, v) : v;
     json.value = JSON.stringify(config, null, 2);
-  } catch (e) {
-    ElMessage.error(t("invalidJson"));
+  } catch {
+    // Keep incomplete input visible and validate it when the user saves.
+    if (!isJson) ElMessage.error(t("invalidJson"));
   }
+}
+function parseMcpField(k: string, value: string) {
+  try {
+    return JSON.parse(value.trim() || (k === "args" ? "[]" : "{}"));
+  } catch {
+    throw new Error(`${k}: ${t("invalidJson")}`);
+  }
+}
+function mcpConfig() {
+  const config = JSON.parse(json.value);
+  for (const [key, value] of Object.entries(mcpJsonFields.value))
+    config[key] = parseMcpField(key, value);
+  return config;
 }
 async function save() {
   try {
     let value: any =
       props.kind === "mcp"
-        ? { config: JSON.parse(json.value), revision: revision.value }
+        ? { config: mcpConfig(), revision: revision.value }
         : props.kind === "cron"
           ? {
               prompt: draft.value.prompt || "",
@@ -277,17 +296,27 @@ watch(() => props.kind, load);
               : ['url', 'headers']"
             :key="k"
             :label="k"
-            ><el-input
+            ><textarea
+              v-if="k === 'headers'"
+              class="mcp-headers-input el-textarea__inner"
+              aria-label="headers"
+              rows="6"
+              spellcheck="false"
+              placeholder='{"X-Client": "lemonclaw"}'
+              :value="mcpJsonFields.headers ?? JSON.stringify(mcpValue('headers'), null, 2) ?? ''"
+              @input="mcpSet('headers', ($event.target as HTMLTextAreaElement).value)"
+            /><el-input
+              v-else
               :model-value="
-                ['args', 'env', 'headers'].includes(k)
-                  ? JSON.stringify(
-                      mcpValue(k) || (['args'].includes(k) ? [] : {}),
-                    )
+                isMcpJsonField(k)
+                  ? (mcpJsonFields[k] ??
+                    JSON.stringify(mcpValue(k) || (k === 'args' ? [] : {})))
                   : mcpValue(k) || ''
               "
-              :type="['headers', 'env'].includes(k) ? 'password' : 'text'"
-              :show-password="['headers', 'env'].includes(k)"
-              @change="(v) => mcpSet(k, v)" /></el-form-item
+              :type="k === 'env' ? 'password' : 'text'"
+              :show-password="k === 'env'"
+              @update:model-value="(v) => mcpSet(k, v)"
+            /></el-form-item
           ><el-form-item label="auto_connect"
             ><el-switch
               :model-value="mcpValue('auto_connect') !== false"
@@ -299,6 +328,7 @@ watch(() => props.kind, load);
         <el-form-item :label="t('advanced')"
           ><el-input
             v-model="json"
+            @input="mcpJsonFields = {}"
             type="textarea"
             :rows="16" /></el-form-item></el-form
       ><template #footer
@@ -310,3 +340,10 @@ watch(() => props.kind, load);
     >
   </section>
 </template>
+
+<style scoped>
+.mcp-headers-input {
+  font-family: monospace;
+  resize: vertical;
+}
+</style>
