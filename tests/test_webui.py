@@ -34,6 +34,8 @@ from agent.workflow import get_workflow_manager
 from agent.workflow.builder import WorkflowBuilder
 from agent.workflow.manager import WorkflowManager
 from channels.bus import get_bus
+from channels.out.fanout import FanoutOutputChannel
+from channels.out.stdout import TerminalOutputChannel
 from channels.webui import state
 from channels.webui.api import OWNER, create_app, ensure_key
 from channels.webui.packages import delete, install, stage
@@ -543,3 +545,37 @@ assert cfg.WEBHOOK_PORT == 9765
         cwd=tmp_path,
         check=True,
     )
+
+
+@pytest.mark.parametrize("source", ["webui", "feishu", "terminal"])
+def test_shared_question_is_presented_and_closed_on_terminal(web, monkeypatch, source):
+    monkeypatch.setattr(state, "enabled", True)
+    monkeypatch.setattr(runtime.get_global_config(), "ENABLE_FEISHU", True)
+    client = MagicMock()
+    client.sender.send_question.return_value = "card-id"
+    monkeypatch.setattr("channels.device.feishu.get_feishu_client", lambda: client)
+    monkeypatch.setattr("channels.device.feishu.get_feishu_owner_open_id", lambda: "owner")
+    terminal = MagicMock(spec=TerminalOutputChannel)
+    out = FanoutOutputChannel([terminal])
+    store = QuestionDAO()
+    row = store.create(
+        "shared-question",
+        "session-default",
+        dict(
+            reason="Confirm",
+            timeout_seconds=3600,
+            questions=[dict(prompt="Continue?", kind="single", options=["yes", "no"])],
+        ),
+        {"source": source, "open_id": "owner"},
+        "tool",
+    )
+    service = object.__new__(AgentService)
+    service.questions = store
+    service._present_question(row, out)
+    assert "Continue?" in terminal.write_message.call_args.args[0]
+    assert store.get("shared-question")["message_id"] == "card-id"
+    assert actor_matches(row, {"_event_type": "terminal"})
+    store.submit("shared-question", {"status": "confirmed", "action": "submit", "answers": []})
+    service._close_question(store.get("shared-question"), out)
+    assert terminal.write_message.call_args.args[0] == "问题 shared-question 已确认。"
+    client.sender.close_question.assert_called_once()

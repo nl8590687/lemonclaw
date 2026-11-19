@@ -51,6 +51,8 @@ from agent.workflow import get_workflow_manager
 from agent.workflow.context import origin_context
 from channels.device import feishu
 from channels.out import BaseOutChannel, build_output_channel
+from channels.out.fanout import FanoutOutputChannel
+from channels.out.stdout import TerminalOutputChannel
 from channels.webui import state as web_state
 from channels.webui.server import available
 from config import get_global_config
@@ -227,7 +229,7 @@ class AgentService:
             reset_user_turn(turn_token)
         if resume_row:
             self.questions.finish(resume_row['question_id'])
-            self._close_question(resume_row)
+            self._close_question(resume_row, out_chan)
         if selected:
             from dao.attachment import AttachmentDAO
             AttachmentDAO().mark(selected, context, "selected")
@@ -300,11 +302,24 @@ class AgentService:
             self.memory.on_messages(result.get("messages", []))
         return result
 
-    def _close_question(self, row):
+    @staticmethod
+    def _terminal_channel(out_chan):
+        if isinstance(out_chan, FanoutOutputChannel):
+            return next((channel for channel in out_chan.channels if isinstance(channel, TerminalOutputChannel)), None)
+        return out_chan
+
+    def _close_question(self, row, out_chan=None):
+        if web_state.enabled or row['origin'].get('source') == 'webui':
+            terminal = self._terminal_channel(out_chan or self.default_out_chan)
+            status = {'confirmed': '已确认', 'cancelled': '已取消', 'timeout': '已超时'}.get(row['status'])
+            if terminal is not None and status:
+                try:
+                    terminal.write_message(f"问题 {row['question_id']} {status}。", row['origin'])
+                except Exception:
+                    pass  # 终端输出失败不影响持久的结束状态。
         if row.get('message_id'):
             try:
-                from channels.device.feishu import get_feishu_client
-                client = get_feishu_client()
+                client = feishu.get_feishu_client()
                 if client is not None:
                     client.sender.close_question(row)
             except Exception:
@@ -317,22 +332,21 @@ class AgentService:
             web_active = getattr(web_state, 'enabled', False)
             feishu_allowed = not web_active or getattr(get_global_config(), 'ENABLE_FEISHU', False)
             owner = feishu.get_feishu_owner_open_id() if web_active and feishu_allowed else None
-            if feishu_allowed and (row['origin'].get('source') == 'feishu' or owner):
-                from channels.device.feishu import get_feishu_client
-                client = get_feishu_client()
+            send_feishu = feishu_allowed and (row['origin'].get('source') == 'feishu' or owner)
+            if web_active or not send_feishu:
+                terminal = self._terminal_channel(out_chan)
+                if terminal is not None:
+                    terminal.write_message(terminal_question(row), row['origin'])
+                elif not send_feishu:
+                    raise ValueError('终端输出不可用')
+            message_id = row.get('message_id')
+            if send_feishu:
+                client = feishu.get_feishu_client()
                 if client is None:
                     raise ValueError('飞书机器人未连接')
                 target_row = dict(row, origin=dict(row['origin'], open_id=owner)) if owner and row['origin'].get('source') != 'feishu' else row
                 message_id = client.sender.send_question(target_row)
-                self.questions.present(row['question_id'], message_id)
-            else:
-                from channels.out.fanout import FanoutOutputChannel
-                from channels.out.stdout import TerminalOutputChannel
-                channel = next((c for c in out_chan.channels if isinstance(c, TerminalOutputChannel)), None) if isinstance(out_chan, FanoutOutputChannel) else out_chan
-                if channel is None:
-                    raise ValueError('终端输出不可用')
-                channel.write_message(terminal_question(row), row['origin'])
-                self.questions.present(row['question_id'])
+            self.questions.present(row['question_id'], message_id)
         except Exception:
             out_chan.write_system_error('人工确认问题发送失败；仍会按时超时取消。可在原入口输入 /question 重发。')
 

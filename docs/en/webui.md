@@ -41,7 +41,7 @@ The existing webhook port remains separate. For remote access, configure HTTPS o
 
 ## Conversation and management
 
-- Chat streams public replies, accepts images/files, and shows pending human questions. Feishu and WebUI answers resolve the same question; the first valid answer wins. Failed Feishu card updates are retried.
+- Chat streams public replies, accepts images/files, and shows pending human questions. While WebUI is active, the terminal also displays shared questions and their final status. The first valid answer from the terminal, Feishu, or WebUI wins. Failed Feishu card updates are retried.
 - Settings displays program defaults and preserves untouched values. Secret fields are masked: an empty edit preserves the value; use **Clear** for explicit clearing. Custom/Skill variables have a separate section, including unknown `.env` keys.
 - Configuration is written atomically to `.env`. Existing calls finish with their captured arguments; subsequent model/tool calls use current settings. Listeners rebind independently; Agent resources are replaced at an idle boundary without restarting the process. After changing the port, open the new address. A conflicting configuration revision requires refreshing before saving.
 - Workflows has a node canvas, connections, node parameter dialogs, state-field/reducer editor, conditional route editor, JSON representation, layout persistence, undo/redo and run inspection. LLM, tool, subagent, main Agent, human and subgraph nodes use the existing backend schema and validation. Run inspection shows persisted node states and checkpoint data; refresh it to update.
