@@ -8,11 +8,13 @@ Install Node.js 24 and the Python dependencies described in [Quick start](gettin
 
 ```bash
 cd webui
-npm ci
+npm ci --include=dev
 npm run build
 cd ..
 python main.py
 ```
+
+The build requires frontend development dependencies such as `vue-tsc`. If `npm run build` cannot find `vue-tsc`, run `npm ci --include=dev` again from `webui` and retry the build once installation succeeds. The commands above also work in Windows Command Prompt.
 
 Open `http://127.0.0.1:8080`. An absent `webui/dist/index.html` disables only the WebUI. Rebuild after changing frontend sources. Build output and `node_modules` must remain untracked.
 

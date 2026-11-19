@@ -8,11 +8,13 @@
 
 ```bash
 cd webui
-npm ci
+npm ci --include=dev
 npm run build
 cd ..
 python main.py
 ```
+
+构建依赖 `vue-tsc` 等前端开发依赖。如果 `npm run build` 提示找不到 `vue-tsc`，在 `webui` 目录重新运行 `npm ci --include=dev`，安装成功后再构建。Windows CMD 也可使用上述命令。
 
 访问 `http://127.0.0.1:8080`。没有 `webui/dist/index.html` 时仅关闭 WebUI，其他通道继续运行。修改前端后重新构建，构建产物和 `node_modules` 不提交到 Git。
 
