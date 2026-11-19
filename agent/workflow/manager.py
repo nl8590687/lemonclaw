@@ -27,12 +27,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from dao.workflow import Workflow, WorkflowRun, WorkflowDAO, ensure_workflow_schema
-from agent.workflow.builder import WorkflowBuilder
-from agent.workflow.runner import WorkflowRunner
-from agent.workflow.executor import WorkflowExecutor
-from agent.workflow.control import RunControl, _current
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
+from agent.workflow.builder import WorkflowBuilder
+from agent.workflow.control import RunControl, _current
+from agent.workflow.executor import WorkflowExecutor
+from agent.workflow.runner import WorkflowRunner
+from channels.webui import state as webui
+from dao.webui import WebStore
+from dao.workflow import Workflow, WorkflowDAO, WorkflowRun, ensure_workflow_schema
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +221,6 @@ class WorkflowManager:
         if wf.last_error:
             return None, {"error": f"工作流编译失败: {wf.last_error}"}
         try:
-            from channels.webui import state as webui
             snapshot = self._snapshot(wf) if webui.enabled or (context or {}).get("source") == "webui" else None
             graph = self._snapshot_graph(snapshot) if snapshot else self._get_graph(wf)
         except Exception as ex:
@@ -232,7 +233,6 @@ class WorkflowManager:
         )
         self.dao.create_run(run)
         if snapshot:
-            from dao.webui import WebStore
             WebStore().layout('run:' + run_id, snapshot)
 
         self.executor.submit(self._run_invoke_task, graph, run_id, wf.workflow_id, input or {}, context or {})
@@ -245,7 +245,6 @@ class WorkflowManager:
         if run.status != "paused":
             return {"error": f"run 状态为 {run.status}，非 paused，无法续跑"}
         wf = self.dao.get_workflow(run.workflow_id)
-        from dao.webui import WebStore
         snapshot = WebStore().layout('run:' + run_id)
         if wf is not None and snapshot:
             wf.spec = snapshot['spec']

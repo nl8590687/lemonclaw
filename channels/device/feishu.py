@@ -40,10 +40,18 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langchain_core.messages import AIMessage
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    CallBackCard,
+    CallBackToast,
+    P2CardActionTriggerResponse,
+)
 
+from channels.webui import state
 from config import get_global_config
 from dao import delete_state, get_or_set_state, get_state, set_state
-
+from dao.attachment import AttachmentDAO
+from dao.db import get_connection
+from dao.question import QuestionDAO
 
 # ---- lark_oapi 是可选依赖 ----
 try:
@@ -793,7 +801,6 @@ class FeishuClient:
             }
 
             from agent.media.images import register_image
-            from dao.attachment import AttachmentDAO
             registered = []
             for index, attachment in enumerate(attachments):
                 if attachment.get('type') == 'image' and attachment.get('path'):
@@ -880,7 +887,6 @@ class FeishuClient:
 
     def _quoted_images(self, parent_id, context):
         """解析用户显式引用的图片消息，先查本地登记再按消息 ID 获取。"""
-        from dao.attachment import AttachmentDAO
         from agent.media.images import register_image
         dao = AttachmentDAO()
         items = dao.for_message(parent_id, context)
@@ -907,9 +913,7 @@ class FeishuClient:
                 for i, key in enumerate(keys)]
 
     def _handle_question_action(self, data):
-        from lark_oapi.event.callback.model.p2_card_action_trigger import (
-            P2CardActionTriggerResponse, CallBackToast, CallBackCard)
-        from dao.question import QuestionDAO
+
         from agent.questions import actor_matches, validate_answers
         response = P2CardActionTriggerResponse()
         try:
@@ -1225,11 +1229,8 @@ def sync_pending_owner_questions():
 
 
 def _sync_pending_owner_questions():
-    from channels.webui import state
     if not getattr(state, 'enabled', False):
         return
-    from dao.db import get_connection
-    from dao.question import QuestionDAO
     store = QuestionDAO()
     with get_connection() as conn:
         ids = [r[0] for r in conn.execute("SELECT question_id FROM user_questions WHERE status!='pending' AND message_id IS NOT NULL ORDER BY deadline DESC LIMIT 100")]

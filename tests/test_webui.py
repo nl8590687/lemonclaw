@@ -2,25 +2,50 @@
 
 import io
 import os
+import subprocess
+import sys
+import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-import zipfile
+from unittest.mock import MagicMock
 
 import pytest
+from dotenv import dotenv_values
 from fastapi.testclient import TestClient
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
 from pydantic import SecretStr
 
+import agent.mcp as mcp
+import agent.memory as memory
+import agent.skill as skills
+import agent.workflow as workflows
+import channels.device.crontab as cron
+import config.config as config_module
+import dao.db as db
+from agent.agent import AgentService, _create_agent
+from agent.mcp import get_mcp_manager
+from agent.questions import actor_matches
+from agent.runtime_middleware import RuntimeConfigurationMiddleware
+from agent.skill import _get_skill_dir, get_skill_manager
+from agent.workflow import get_workflow_manager
+from agent.workflow.builder import WorkflowBuilder
+from agent.workflow.manager import WorkflowManager
+from channels.bus import get_bus
+from channels.webui import state
+from channels.webui.api import OWNER, create_app, ensure_key
+from channels.webui.packages import delete, install, stage
 from config import runtime
 from config.config import GlobalConfig
-from channels.webui import state
-from channels.webui.api import create_app
+from dao.question import QuestionDAO
+from dao.webui import WebStore
+from tests.test_checkpoint import FakeModel
 
 
 @pytest.fixture
 def web(tmp_path, monkeypatch):
-    import config.config as config_module
-    import dao.db as db
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(db, "_global_db_path", tmp_path / "lemonclaw.db")
@@ -39,11 +64,6 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "revision", 0)
     state.busy.clear()
     monkeypatch.setattr(state, "enabled", False)
-    import agent.skill as skills
-    import agent.workflow as workflows
-    import agent.memory as memory
-    import agent.mcp as mcp
-    import channels.device.crontab as cron
 
     for module, attr in [
         (skills, "_global_skill_manager"),
@@ -104,7 +124,6 @@ def test_auth_origin_logout_and_rotation(web):
 def test_generated_key_persisted_and_reused(web):
     cfg = runtime.get_global_config()
     cfg.WEBUI_AUTH_KEY = SecretStr("")
-    from channels.webui.api import ensure_key
 
     key = ensure_key()
     assert len(key) >= 40
@@ -133,7 +152,6 @@ def test_settings_defaults_and_unknown_variables(web):
     assert web.patch("/api/v1/settings", json={"changes": {"WEBUI_PORT": -1}}).status_code == 409
     secret = "quotes' spaces\\and\nlines#literal"
     assert web.patch("/api/v1/settings", json={"custom": True, "changes": {"MY_SKILL_KEY": secret}}).status_code == 200
-    from dotenv import dotenv_values
 
     assert dotenv_values(path)["MY_SKILL_KEY"] == secret
     assert secret not in web.get("/api/v1/settings").text
@@ -143,7 +161,6 @@ def test_settings_defaults_and_unknown_variables(web):
 
 
 def test_request_deduplication_and_shared_session(web, monkeypatch):
-    from channels.bus import get_bus
 
     calls = []
     monkeypatch.setattr(get_bus(), "publish", lambda **kwargs: calls.append(kwargs))
@@ -174,7 +191,6 @@ def test_upload_registered_files_and_reject_corrupt_images(web):
 
 
 def test_cross_channel_question_single_winner(web):
-    from dao.question import QuestionDAO
 
     unlock(web)
     store = QuestionDAO()
@@ -195,8 +211,6 @@ def test_cross_channel_question_single_winner(web):
     b = web.post("/api/v1/questions/question-test/cancel", json={})
     assert b.json()["status"] == "confirmed"
     assert store.get("question-test")["result"]["answers"][0]["values"] == ["yes"]
-    from agent.questions import actor_matches
-    from channels.webui.api import OWNER
 
     ui_row = dict(origin=OWNER)
     assert actor_matches(ui_row, {"_event_type": "terminal"})
@@ -213,14 +227,12 @@ def archive(files):
 
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "folder/../../escape", "C:/escape"])
 def test_skill_archive_rejects_traversal(web, name):
-    from channels.webui.packages import stage
 
     with pytest.raises(ValueError):
         stage(archive({name: "danger"}))
 
 
 def test_skill_upload_only_stages_validated_package(web):
-    from channels.webui.packages import stage
 
     package = stage(
         archive(
@@ -238,7 +250,6 @@ def test_skill_upload_only_stages_validated_package(web):
 def test_configuration_multiline_replacement(web):
     runtime.save({"EXTRA": "first\nold-line"}, custom=True)
     runtime.save({"EXTRA": "second"}, custom=True)
-    from dotenv import dotenv_values
 
     assert dotenv_values(runtime.env_path())["EXTRA"] == "second"
     assert "old-line" not in runtime.env_path().read_text()
@@ -278,14 +289,11 @@ def test_management_cron_memory_and_workflow_roundtrip(web):
     assert web.put("/api/v1/manage/workflows/" + workflow["workflow_id"], json=data).status_code == 200
     assert web.put("/api/v1/manage/workflows/" + workflow["workflow_id"], json=data).status_code == 409
     assert web.delete("/api/v1/manage/workflows/" + workflow["workflow_id"]).json()["deleted"]
-    from agent.workflow import get_workflow_manager
 
     get_workflow_manager().executor.shutdown()
 
 
 def test_skill_install_replace_delete_uses_same_registry(web):
-    from channels.webui.packages import stage, install, delete
-    from agent.skill import get_skill_manager, _get_skill_dir
 
     package = stage(archive({"SKILL.md": "---\nname: demo\ndescription: Example skill\n---\nInstructions\n"}))
     assert install(package["id"])["installed"]
@@ -299,9 +307,7 @@ def test_skill_install_replace_delete_uses_same_registry(web):
 
 
 def test_nested_workflow_snapshot_survives_edit_and_restart(web):
-    import time
-    from agent.workflow import get_workflow_manager
-    from agent.workflow.manager import WorkflowManager
+
 
     manager = get_workflow_manager()
     child_spec = dict(
@@ -332,7 +338,6 @@ def test_nested_workflow_snapshot_survives_edit_and_restart(web):
     wait(manager, "paused")
     child_spec["nodes"][0]["config"]["question"] = "New question"
     manager.define_workflow("child", "", child_spec)
-    from dao.webui import WebStore
 
     assert (
         WebStore().layout("run:" + rid)["definitions"][child.workflow_id]["spec"]["nodes"][0]["config"]["question"]
@@ -349,11 +354,8 @@ def test_nested_workflow_snapshot_survives_edit_and_restart(web):
 
 
 def test_parallel_wait_all_join_is_executed_once(web):
-    import time
-    from types import SimpleNamespace
-    from langgraph.checkpoint.memory import MemorySaver
-    from langchain_core.tools import tool
-    from agent.workflow.builder import WorkflowBuilder
+
+
 
     @tool
     def echo(value: str) -> str:
@@ -392,12 +394,7 @@ def test_parallel_wait_all_join_is_executed_once(web):
 
 
 def test_live_model_configuration_changes_at_next_call(web, monkeypatch):
-    from agent.runtime_middleware import RuntimeConfigurationMiddleware
-    from agent.agent import _create_agent
-    from langchain_core.tools import tool
-    from langchain_core.messages import AIMessage, HumanMessage
-    from langgraph.checkpoint.memory import MemorySaver
-    from tests.test_checkpoint import FakeModel
+
 
     @tool
     def change_temperature() -> str:
@@ -429,8 +426,6 @@ def test_live_model_configuration_changes_at_next_call(web, monkeypatch):
 
 
 def test_unstarted_request_recovery_and_changed_id_rejection(web, monkeypatch):
-    from dao.webui import WebStore
-    from channels.bus import get_bus
 
     calls = []
     monkeypatch.setattr(get_bus(), "publish", lambda **kwargs: calls.append(kwargs))
@@ -449,7 +444,6 @@ def test_unstarted_request_recovery_and_changed_id_rejection(web, monkeypatch):
 
 
 def test_mcp_configuration_preserves_hidden_credentials(web, monkeypatch):
-    from agent.mcp import get_mcp_manager
 
     manager = get_mcp_manager()
     monkeypatch.setattr(manager, "connect", lambda server_id: (True, ""))
@@ -486,10 +480,7 @@ def test_mcp_configuration_preserves_hidden_credentials(web, monkeypatch):
 
 
 def test_disabled_feishu_uses_web_question_without_stale_client(web, monkeypatch):
-    from unittest.mock import MagicMock
-    from agent.agent import AgentService
-    from dao.question import QuestionDAO
-    from channels.webui.api import OWNER
+
 
     owner = MagicMock(return_value="existing-owner")
     client = MagicMock()
@@ -519,8 +510,6 @@ def test_disabled_feishu_uses_web_question_without_stale_client(web, monkeypatch
 
 
 def test_startup_env_precedence_and_webui_default_display(tmp_path, monkeypatch):
-    import subprocess
-    import sys
 
     root = Path(__file__).resolve().parents[1]
     directory = tmp_path / ".lemonclaw"

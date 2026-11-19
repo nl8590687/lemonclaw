@@ -17,6 +17,8 @@ import argparse
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 
+from channels.webui import server
+
 
 def _get_version() -> str:
     try:
@@ -45,8 +47,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     from loop import loop_forever, start_event_source
 
     get_global_config()
-    from channels.webui.server import start
-    start()
+    server.start()
     start_event_source()
     loop_forever()
 

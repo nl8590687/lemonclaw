@@ -20,13 +20,27 @@ The owner task also closes the context (AnyIO task groups require this).
 """
 import asyncio
 import atexit
-from concurrent.futures import Future, TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
 import logging
-from threading import Thread, current_thread, Lock, Event
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
+from dataclasses import dataclass, field
+from threading import Event, Lock, Thread, current_thread
 from typing import Any
 
 from langchain_core.messages import ToolMessage
+from langchain_core.messages.content import create_audio_block, create_file_block, create_image_block, create_text_block
+from mcp.types import (
+    AudioContent,
+    ElicitRequest,
+    ElicitRequestFormParams,
+    ElicitResult,
+    EmbeddedResource,
+    ImageContent,
+    InputRequiredResult,
+    ResourceLink,
+    TextContent,
+)
+from mcp.types.version import LATEST_MODERN_VERSION, is_version_at_least
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +224,6 @@ class MCPConnection:
         Modern human input is surfaced to the existing durable question flow;
         no sampling/model invocation is silently authorized by a remote server.
         """
-        from mcp.types import InputRequiredResult, ElicitRequest, ElicitRequestFormParams, ElicitResult
-        from mcp.types.version import LATEST_MODERN_VERSION, is_version_at_least
         from langgraph.types import interrupt
         client = self.adapter.client
         if not is_version_at_least(client.protocol_version, LATEST_MODERN_VERSION):
@@ -243,8 +255,6 @@ class MCPConnection:
 
     @staticmethod
     def _message(result, tool_name, tool_call_id):
-        from langchain_core.messages.content import create_text_block, create_image_block, create_audio_block, create_file_block
-        from mcp.types import TextContent, ImageContent, AudioContent, EmbeddedResource, ResourceLink
         blocks = []
         for block in result.content:
             if isinstance(block, TextContent):

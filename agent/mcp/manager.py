@@ -30,11 +30,10 @@ import re
 from datetime import datetime
 from typing import Any
 
+from agent.mcp.client import MCPConnection, ToolInfo
 from config import get_global_config
 from dao.db import get_db_path
 from dao.mcp_server import MCPServer, MCPServerDAO, ensure_mcp_schema
-
-from agent.mcp.client import MCPConnection, ToolInfo
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +215,6 @@ class MCPManager:
         -> 移除已删服务端的 _connections -> 重连所有 enabled -> 同步 DB。
         不重建 agent（由 AgentService.reload_mcp_tools 负责）。密钥在 mcp.json，无需重载 .env。"""
         self._sync_from_file()
-        from config import get_global_config
         if preserve_active and not getattr(get_global_config(), "ENABLE_MCP", True):
             self.close(preserve_active=True)
             return

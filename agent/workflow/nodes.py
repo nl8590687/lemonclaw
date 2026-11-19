@@ -24,14 +24,17 @@ subagent 节点在 worker 线程内联执行（不 yield）；main_agent / human
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langgraph.types import interrupt
 from langgraph.errors import GraphBubbleUp
+from langgraph.types import interrupt
 
-from agent.workflow.state import render_template
+from agent.tools import create_tool_list
 from agent.workflow.control import check_control
+from agent.workflow.state import render_template
+from config import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +93,11 @@ def _llm_node(nc: dict, llm):
 
 def _tool_node(nc: dict, tools: dict):
     """调用 tools[tool_name]，参数来自 nc.args 模板 + state，写入 output_field。"""
-    from config import runtime
     built_revision = runtime.revision
     def fn(state, config=None):
         tool_name = nc.get("tool_name", "")
         tool = tools.get(tool_name)
         if built_revision != runtime.revision:
-            from agent.tools import create_tool_list
             tool = next((item for item in create_tool_list() if item.name == tool_name), None)
         if tool is None:
             return {_output_field(nc, "output"): f"❌ 工具不存在: {tool_name}"}
@@ -190,7 +191,6 @@ def _subgraph_node(nc: dict, manager):
             if sub_graph is None:
                 return {_output_field(nc, "output"): f"❌ 子工作流不存在: {sub_workflow_id}"}
             if not use_snapshot:
-                import uuid
                 config = {"configurable": {"thread_id": f"sub_{uuid.uuid4().hex[:8]}"}}
             result = sub_graph.invoke(dict(state), config=config)
             return {k: v for k, v in result.items() if k in (state or {})}

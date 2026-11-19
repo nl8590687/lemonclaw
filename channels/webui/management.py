@@ -1,21 +1,29 @@
 """Management actions reuse existing managers and validators."""
 
-from dataclasses import asdict
 import hashlib
 import json
-from pathlib import Path
+import os
 import re
 import tempfile
-import os
+from dataclasses import asdict
+
 from fastapi import HTTPException
+
+from agent.mcp import get_mcp_manager
+from agent.memory import get_memory_manager
+from agent.skill import get_skill_manager
+from agent.workflow import get_workflow_manager
+from agent.workflow.spec import NodeConfig, WorkflowSpec, validate_spec
+from channels.device.crontab import get_cron_manager, parse_cron
 from channels.webui import state
-from config.runtime import redact
+from channels.webui.packages import delete
+from config import get_global_config
+from config.runtime import touch
+from dao.db import get_connection, get_db_path
 from dao.webui import WebStore
 
 
 def workflow_references(wid):
-    from agent.workflow import get_workflow_manager
-    from channels.device.crontab import get_cron_manager
 
     manager = get_workflow_manager()
     if manager is None:
@@ -34,13 +42,8 @@ def workflow_references(wid):
 
 
 def operation(kind, item_id, method, data):
-    from agent.workflow import get_workflow_manager
-    from agent.skill import get_skill_manager
-    from agent.mcp import get_mcp_manager
-    from channels.device.crontab import get_cron_manager
 
     if kind == "catalog":
-        from agent.workflow.spec import NodeConfig, WorkflowSpec
 
         tools = state.service.tools if state.service else []
         tools = list(tools.values()) if isinstance(tools, dict) else list(tools)
@@ -60,8 +63,6 @@ def operation(kind, item_id, method, data):
             skills=[s.to_dict() for s in get_skill_manager().list_skills()],
         )
     if kind == "workflows":
-        from dao.workflow import Workflow
-        from agent.workflow.spec import validate_spec
 
         manager = get_workflow_manager()
         if manager is None:
@@ -142,7 +143,6 @@ def operation(kind, item_id, method, data):
         manager = get_cron_manager()
         if method == "GET":
             tasks = manager.list_tasks()
-            from channels.device.crontab import parse_cron
 
             return [dict(x.to_dict(), next_run=str(parse_cron(x.cron_expression).next_run())) for x in tasks]
         if method == "DELETE":
@@ -156,7 +156,6 @@ def operation(kind, item_id, method, data):
             raise HTTPException(404)
         return task.to_dict()
     if kind == "mcp":
-        from dao.db import get_db_path
 
         path = get_db_path().parent / "mcp.json"
         if path.exists():
@@ -184,7 +183,6 @@ def operation(kind, item_id, method, data):
                 ],
             )
         if data.get("action") in ("enable", "disable", "reconnect"):
-            from config import get_global_config
 
             if data["action"] != "disable" and not get_global_config().ENABLE_MCP:
                 raise ValueError("Enable MCP in settings before connecting")
@@ -193,7 +191,6 @@ def operation(kind, item_id, method, data):
             )
             if isinstance(result, tuple) and not result[0]:
                 raise ValueError(result[1])
-            from config.runtime import touch
 
             touch()
             return {"result": result}
@@ -235,7 +232,6 @@ def operation(kind, item_id, method, data):
             if os.path.exists(tmp):
                 os.unlink(tmp)
         manager.reload(preserve_active=True)
-        from config.runtime import touch
 
         touch()
         return dict(saved=True)
@@ -247,7 +243,6 @@ def operation(kind, item_id, method, data):
                 for x in manager.list_skills()
             ]
         if method == "DELETE":
-            from channels.webui.packages import delete
 
             return delete(item_id)
         action = data.get("action")
@@ -255,7 +250,6 @@ def operation(kind, item_id, method, data):
             raise ValueError("Unknown action")
         return dict(result=getattr(manager, action)(item_id) if action != "reload" else manager.reload())
     if kind == "memory":
-        from agent.memory import get_memory_manager
 
         manager = get_memory_manager()
         if method == "GET":
@@ -273,7 +267,6 @@ def operation(kind, item_id, method, data):
                 saved=manager.remember(data["key"], data["value"], data["memory_type"], data.get("description", ""))
             )
         if item_id:
-            from dao.db import get_connection
 
             with get_connection() as c:
                 c.execute(

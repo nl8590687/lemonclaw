@@ -18,34 +18,44 @@ AI Agent Core Implements
 
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage, RemoveMessage
-from agent.checkpoint import PersistentSaver
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
-from langgraph.types import Command
-from dao.question import QuestionDAO
-from agent.questions import (pending_question, parse_terminal, actor_matches, terminal_question,
-                             begin_question_turn, reset_question_turn)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
-from agent.history import protected_boundary, trim_oversized
+from langgraph.types import Command
 
-from agent.llm import create_openai_llm, get_system_prompt, BASE_SYSTEM_PROMPT
+from agent.callback import StreamingCallback
+from agent.checkpoint import PersistentSaver
+from agent.context_agent import ContextAgent
+from agent.history import protected_boundary, trim_oversized
+from agent.llm import BASE_SYSTEM_PROMPT, create_openai_llm, get_system_prompt
+from agent.mcp import get_mcp_manager
+from agent.memory import MemoryMiddleware, get_memory_manager
+from agent.questions import (
+    actor_matches,
+    begin_question_turn,
+    parse_terminal,
+    pending_question,
+    reset_question_turn,
+    terminal_question,
+)
+from agent.runtime_middleware import RuntimeConfigurationMiddleware
+from agent.skill import get_skill_manager
 from agent.tools import create_tool_list
-from agent.tools.question_tool import QuestionCallGuard
 from agent.tools.feishu_tool import begin_feishu_turn, reset_feishu_turn
 from agent.tools.network_guard import begin_user_turn, reset_user_turn
-from agent.tools.notification_tool import begin_notifications, reset_notifications, TurnCompletionMiddleware
-from agent.callback import StreamingCallback
-from agent.context_agent import ContextAgent
-from agent.memory import get_memory_manager, MemoryMiddleware
-from agent.skill import get_skill_manager
-from agent.mcp import get_mcp_manager
+from agent.tools.notification_tool import TurnCompletionMiddleware, begin_notifications, reset_notifications
+from agent.tools.question_tool import QuestionCallGuard
 from agent.workflow import get_workflow_manager
 from agent.workflow.context import origin_context
+from channels.device import feishu
 from channels.out import BaseOutChannel, build_output_channel
+from channels.webui import state as web_state
+from channels.webui.server import available
 from config import get_global_config
 from dao.memory import CoreMemory
+from dao.question import QuestionDAO
 
 
 def _create_agent(llm: BaseChatModel, tools: dict[str, Any], system_prompt: SystemMessage | str, checkpointer, middleware=None):
@@ -304,11 +314,9 @@ class AgentService:
         if row['presented'] and not force:
             return
         try:
-            from channels.webui import state as web_state
-            from channels.device.feishu import get_feishu_owner_open_id
             web_active = getattr(web_state, 'enabled', False)
             feishu_allowed = not web_active or getattr(get_global_config(), 'ENABLE_FEISHU', False)
-            owner = get_feishu_owner_open_id() if web_active and feishu_allowed else None
+            owner = feishu.get_feishu_owner_open_id() if web_active and feishu_allowed else None
             if feishu_allowed and (row['origin'].get('source') == 'feishu' or owner):
                 from channels.device.feishu import get_feishu_client
                 client = get_feishu_client()
@@ -390,10 +398,8 @@ class AgentService:
         """构造上下文中间件并刷新 self._middleware 引用。
         记忆或技能任一开启 -> 挂载 MemoryMiddleware（base_prompt 固定 BASE_SYSTEM_PROMPT，
         技能摘要与活跃全文由中间件每轮现取）；两者均关 -> 返回 []。"""
-        from channels.webui.server import available
         live_config = getattr(get_global_config(), "ENABLE_WEBUI", False) and available()
         need_mw = bool(self.memory or self.skill_manager or live_config)
-        from agent.runtime_middleware import RuntimeConfigurationMiddleware
         live = [RuntimeConfigurationMiddleware()] if live_config else []
         if not need_mw:
             self._middleware = None

@@ -19,13 +19,17 @@ Loop forever
 from rich.text import Text
 
 from agent.agent import AgentService
-from channels.bus import get_bus, EventMessage, EventType
-from channels.ins import TerminalInput, WebhookInput, FeishuInput, CrontabInput
+from channels.bus import EventMessage, EventType, get_bus
+from channels.device.feishu import sync_pending_owner_questions
+from channels.ins import CrontabInput, FeishuInput, TerminalInput, WebhookInput
 from channels.out import BaseOutChannel, build_output_channel
+from channels.webui import reload as web_reload
+from channels.webui import state as web_state
+from channels.webui.server import available, stop
 from command import handle_command
-from config import get_global_config
+from config import get_global_config, runtime
 from dao.question import QuestionDAO
-
+from dao.webui import WebStore
 
 _event_sources = []
 
@@ -76,15 +80,10 @@ def format_attachment_log(attachments: list[dict[str, object]]) -> str:
 
 def loop_forever():
     svr = AgentService()
-    from channels.webui import state as web_state
-    from dao.webui import WebStore
-    from config import runtime
     web_state.service = svr
     svr._web_config_revision = runtime.revision
-    from channels.webui.server import available
     if getattr(get_global_config(), "ENABLE_WEBUI", False) and available():
-        from channels.webui.reload import resource_snapshot
-        svr._web_resources = resource_snapshot()
+        svr._web_resources = web_reload.resource_snapshot()
         web_state.recover_requests()
     msg_bus = get_bus()
     while True:
@@ -97,8 +96,7 @@ def loop_forever():
         event_msg = None
         try:
             if getattr(svr, '_web_config_revision', runtime.revision) != runtime.revision:
-                from channels.webui.reload import refresh_agent
-                refresh_agent(svr)
+                web_reload.refresh_agent(svr)
                 svr._web_config_revision = runtime.revision
             store = getattr(svr, 'questions', None)
             ready = store.ready() if isinstance(store, QuestionDAO) else []
@@ -110,7 +108,6 @@ def loop_forever():
                                          content={'text': '[人工确认结果]'}, priority=EventPriority.HIGH)
             else:
                 event_msg: EventMessage = msg_bus.poll(timeout=1)
-            from channels.device.feishu import sync_pending_owner_questions
             if web_state.enabled:
                 sync_pending_owner_questions()
             if not event_msg:
@@ -201,7 +198,6 @@ def loop_forever():
             if question_origin and not reaction_waiting and question_origin.get('message_id') != (reaction_context or {}).get('message_id'):
                 finish_live_reaction(question_origin, reaction_completed)
 
-    from channels.webui.server import stop
     stop()
     stop_event_source()
     # 退出前快速归档当前会话（fast=True：跳过 LLM，仅统计版抽取，不重载索引，毫秒级）

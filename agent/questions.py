@@ -1,10 +1,13 @@
 """人工问题的校验、终端协议与主轮次上下文。"""
-from contextvars import ContextVar
-from typing import Literal
-from datetime import datetime
 import re
+from contextvars import ContextVar
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from channels.device.feishu import get_feishu_owner_open_id
+from channels.webui import state
 
 
 class UserQuestion(BaseModel):
@@ -32,14 +35,12 @@ class QuestionSpec(BaseModel):
 
 
 def actor_matches(row, context):
-    from channels.webui import state
     if getattr(state, 'enabled', False) or row.get('origin', {}).get('source') == 'webui':
         if context.get('source') == 'webui' and context.get('_webui_owner') is True and context.get('_event_type') == 'webui':
             return True
         if (context.get('source') or 'terminal') == 'terminal' and context.get('_event_type') in {None, '', 'terminal'}:
             return True
         if context.get('source') == 'feishu':
-            from channels.device.feishu import get_feishu_owner_open_id
             if context.get('sender_type') == 'user' and context.get('open_id') == get_feishu_owner_open_id():
                 return True
     origin = row['origin']

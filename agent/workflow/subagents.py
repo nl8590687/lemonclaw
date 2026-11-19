@@ -25,9 +25,12 @@ import uuid
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
+from agent.runtime_middleware import RuntimeConfigurationMiddleware
+from agent.workflow.control import ControlCallback, check_control, current_control
+from channels.webui.server import available
 from config import get_global_config
 
 logger = logging.getLogger(__name__)
@@ -52,8 +55,6 @@ class BaseSubAgent:
 
     def build(self):
         """构造 create_agent 实例。子类可覆盖以定制图（多节点/子图/专用工具）。"""
-        from agent.runtime_middleware import RuntimeConfigurationMiddleware
-        from channels.webui.server import available
         middleware = [RuntimeConfigurationMiddleware(allowed_names=[t.name for t in self.tools])] if getattr(get_global_config(), 'ENABLE_WEBUI', False) and available() else []
         return create_agent(
             middleware=middleware,
@@ -68,7 +69,6 @@ class BaseSubAgent:
 
         公共机制，子类一般不覆盖。在 workflow worker 线程内联调用（不 yield 到主循环）。
         """
-        from agent.workflow.control import current_control, ControlCallback, check_control
         control = current_control()
         check_control()
         thread_id = f"sa_{self.subagent_id}_{uuid.uuid4().hex[:8]}"

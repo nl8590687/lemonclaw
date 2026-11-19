@@ -2,7 +2,11 @@
 
 import json
 import threading
+
+from channels.bus import EventType, get_bus
 from config.runtime import redact
+from dao.db import get_connection
+from dao.question import QuestionDAO
 from dao.webui import WebStore
 
 enabled = False
@@ -47,8 +51,6 @@ def context():
 
 
 def questions():
-    from dao.db import get_connection
-    from dao.question import QuestionDAO
 
     store = QuestionDAO()
     store.ready()  # persist elapsed deadlines even while the main agent is busy
@@ -73,7 +75,6 @@ def questions():
 
 
 def recover_requests():
-    from channels.bus import get_bus, EventType
 
     for row in WebStore().recover():
         payload = json.loads(row["data"])

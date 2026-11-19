@@ -1,8 +1,13 @@
 """In-process WebUI listener with safe missing-dist fallback."""
 
 import logging
-from pathlib import Path
 import threading
+from pathlib import Path
+
+import uvicorn
+
+from channels.webui import state
+from channels.webui.api import create_app
 from config import get_global_config
 
 log = logging.getLogger(__name__)
@@ -23,9 +28,6 @@ def start():
 
     def supervise():
         global _server
-        from channels.webui import state
-        import uvicorn
-        from channels.webui.api import create_app
 
         while not _stop.is_set():
             cfg = get_global_config()

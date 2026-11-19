@@ -1,12 +1,16 @@
 """工作流运行控制：协作取消、节点期限和失败重试。"""
 
 import contextvars
+import json
 import queue
 import threading
 import time
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphBubbleUp
+
+from dao.db import get_connection
+from dao.webui import WebStore
 
 
 class WorkflowStopped(BaseException):
@@ -84,9 +88,6 @@ def controlled_node(fn, nc, name, compensation=None, *, track_status=False):
         def report(status):
             if not run_id:
                 return
-            from dao.webui import WebStore
-            from dao.db import get_connection
-            import json
             with get_connection() as c:
                 c.execute('BEGIN IMMEDIATE')
                 row = c.execute('SELECT data FROM webui_layouts WHERE id=?', ('nodes:' + run_id,)).fetchone()
@@ -95,7 +96,6 @@ def controlled_node(fn, nc, name, compensation=None, *, track_status=False):
                 c.execute('INSERT OR REPLACE INTO webui_layouts VALUES(?,?)', ('nodes:' + run_id, json.dumps(data)))
         # Ensure persistence tables exist before entering the write transaction.
         if run_id:
-            from dao.webui import WebStore
             WebStore()
         report('running')
         for attempt in range(nc.get("max_retries", 0) + 1):

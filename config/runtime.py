@@ -1,15 +1,21 @@
 """Atomic application .env edits and live configuration snapshots (no Docker configuration)."""
 
 import hashlib
+import io
+import math
 import os
-from pathlib import Path
 import re
+import socket
 import tempfile
 import threading
+from pathlib import Path
+
 from dotenv import dotenv_values
+from dotenv.parser import parse_stream
 from pydantic import SecretStr
 
 from config import get_global_config
+from config.config import find_config_file
 from config.descriptions import DESCRIPTIONS, LEGACY_DEFAULTS
 from dao.db import get_db_path
 
@@ -25,7 +31,6 @@ def touch():
 
 
 def env_path() -> Path:
-    from config.config import find_config_file
 
     return find_config_file(".env") or get_db_path().parent / ".env"
 
@@ -119,7 +124,6 @@ def save(changes: dict, expected=None, *, custom=False):
             if name in fields:
                 data[name] = LEGACY_DEFAULTS.get(name, fields[name].default) if value is None else value
         candidate = type(cfg).model_validate(data)
-        import math
 
         for value in candidate.model_dump().values():
             if isinstance(value, float) and not math.isfinite(value):
@@ -129,7 +133,6 @@ def save(changes: dict, expected=None, *, custom=False):
         if candidate.ENABLE_WEBUI and candidate.ENABLE_WEBHOOK and candidate.WEBUI_PORT == candidate.WEBHOOK_PORT:
             raise ValueError("WebUI and webhook must use independent ports")
         if candidate.ENABLE_WEBUI and (candidate.WEBUI_HOST, candidate.WEBUI_PORT) != (cfg.WEBUI_HOST, cfg.WEBUI_PORT):
-            import socket
 
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -140,8 +143,6 @@ def save(changes: dict, expected=None, *, custom=False):
         path = env_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         original = path.read_text(encoding="utf-8") if path.exists() else ""
-        from dotenv.parser import parse_stream
-        import io
 
         lines = [
             binding.original.string for binding in parse_stream(io.StringIO(original)) if binding.key not in changes

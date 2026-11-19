@@ -98,6 +98,7 @@ def create_protocol_tool(connection, tool_name, manager=None):
     """Expose resources/prompts using the same scoped multimodal result path."""
     import json
     from types import SimpleNamespace
+
     from mcp.types import EmbeddedResource
 
     def invoke(server_id, operation_name, arguments, call_id, _lc_config):

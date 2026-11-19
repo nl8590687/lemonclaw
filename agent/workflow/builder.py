@@ -24,14 +24,14 @@ subagent 节点编译期构造 BaseSubAgent 实例并注册到 manager._subagent
 import logging
 from typing import Any
 
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateT
 
-from agent.workflow.state import build_state_schema, render_template
+from agent.workflow.control import check_control, controlled_node
 from agent.workflow.nodes import make_node
+from agent.workflow.state import build_state_schema, render_template
 from agent.workflow.subagents import GeneralSubAgent, get_subagent_class
-from agent.workflow.control import controlled_node, check_control
 
 logger = logging.getLogger(__name__)
 

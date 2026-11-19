@@ -1,11 +1,20 @@
 """Refresh resources at an idle boundary, preserving the single Agent checkpoint."""
 
+import loop
+from agent.agent import _create_agent
+from agent.llm import create_openai_llm, get_system_prompt
+from agent.mcp import get_mcp_manager
+from agent.memory import get_memory_manager
+from agent.skill import get_skill_manager
+from agent.workflow import get_workflow_manager
+from channels.device.feishu import set_feishu_client
+from channels.ins import FeishuInput, WebhookInput
 from config import get_global_config
+from config.runtime import plain
 
 
 def resource_snapshot():
     cfg = get_global_config()
-    from config.runtime import plain
 
     return {
         prefix: {
@@ -18,12 +27,6 @@ def resource_snapshot():
 
 
 def refresh_agent(service):
-    from agent.agent import _create_agent
-    from agent.llm import create_openai_llm, get_system_prompt
-    from agent.skill import get_skill_manager
-    from agent.mcp import get_mcp_manager
-    from agent.memory import get_memory_manager
-    from agent.workflow import get_workflow_manager
 
     cfg = get_global_config()
     previous = getattr(service, "_web_resources", {})
@@ -66,8 +69,6 @@ def refresh_agent(service):
     ]:
         setattr(service, attr, getattr(cfg, field))
     # Only restart channel resources at this safe boundary; terminal/Cron remain intact.
-    import loop
-    from channels.ins import WebhookInput, FeishuInput
 
     for cls, enabled, prefix in [
         (WebhookInput, cfg.ENABLE_WEBHOOK, "WEBHOOK_"),
@@ -83,7 +84,6 @@ def refresh_agent(service):
                 source.stop()
                 loop._event_sources.remove(source)
         if not enabled and prefix == "FEISHU_":
-            from channels.device.feishu import set_feishu_client
 
             set_feishu_client(None)
         if enabled:

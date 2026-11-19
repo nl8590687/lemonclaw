@@ -1,14 +1,18 @@
 """Validate skill archives without executing uploaded code or dependency hooks."""
 
 import io
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import tempfile
 import uuid
 import zipfile
-from agent.skill.registry import parse_frontmatter
+from pathlib import Path, PurePosixPath
+
 from agent.skill import _get_skill_dir, get_skill_manager
+from agent.skill.registry import parse_frontmatter
+from agent.workflow import get_workflow_manager
+from channels.webui import state
+from dao.webui import WebStore
 
 MAX_BYTES = 30 * 1024 * 1024
 
@@ -54,7 +58,6 @@ def stage(data):
         if not name or not all(ch.isalnum() or ch in "_-" for ch in name):
             raise ValueError("Invalid skill name")
         # Store preview in the same database; temporary path never comes from the browser.
-        from dao.webui import WebStore
 
         token = uuid.uuid4().hex
         WebStore().layout("package:" + token, dict(path=str(skill_root), temp=str(tmp), name=name))
@@ -71,7 +74,6 @@ def stage(data):
 
 
 def install(token, replace=False):
-    from dao.webui import WebStore
 
     item = WebStore().layout("package:" + token)
     if not item or not Path(item["path"]).is_dir():
@@ -109,9 +111,6 @@ def install(token, replace=False):
 
 
 def ensure_unused(name):
-    from channels.webui import state
-    from agent.workflow import get_workflow_manager
-    import json
 
     if state.busy.is_set():
         raise ValueError("Agent busy; retry at the next safe boundary")

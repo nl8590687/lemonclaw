@@ -2,7 +2,12 @@
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
-from config import runtime
+
+import agent.llm
+from agent.mcp import get_mcp_manager
+from agent.skill import get_skill_manager
+from agent.tools import create_tool_list
+from config import get_global_config, runtime
 
 
 class RuntimeConfigurationMiddleware(AgentMiddleware):
@@ -13,17 +18,14 @@ class RuntimeConfigurationMiddleware(AgentMiddleware):
 
     def current_tools(self):
         if self.revision != runtime.revision:
-            from config import get_global_config
 
             cfg = get_global_config()
             if cfg.ENABLE_SKILLS:
-                from agent.skill import get_skill_manager
 
                 manager = get_skill_manager()
                 manager.max_active, manager.script_timeout = cfg.MAX_ACTIVE_SKILLS, cfg.SKILL_SCRIPT_TIMEOUT
                 manager.pip_index_url, manager.npm_registry = cfg.PIP_INDEX_URL, cfg.NPM_REGISTRY
             if cfg.ENABLE_MCP:
-                from agent.mcp import get_mcp_manager
 
                 manager = get_mcp_manager()
                 if manager:
@@ -32,7 +34,6 @@ class RuntimeConfigurationMiddleware(AgentMiddleware):
                     for connection in list(manager._connections.values()):
                         connection.call_timeout = cfg.MCP_CALL_TIMEOUT
                         connection.result_max_chars = cfg.MCP_RESULT_MAX_CHARS
-            from agent.tools import create_tool_list
 
             tools = create_tool_list()
             self._live_tools = {t.name: t for t in tools if self.allowed_names is None or t.name in self.allowed_names}
@@ -42,9 +43,8 @@ class RuntimeConfigurationMiddleware(AgentMiddleware):
     def wrap_model_call(self, request, handler):
         tools = self.current_tools()
         if tools is not None:
-            from agent.llm import create_openai_llm
 
-            return handler(request.override(model=create_openai_llm(), tools=list(tools.values())))
+            return handler(request.override(model=agent.llm.create_openai_llm(), tools=list(tools.values())))
         return handler(request)
 
     def wrap_tool_call(self, request, handler):

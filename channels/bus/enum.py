@@ -18,6 +18,7 @@ Event Enums
 
 import enum
 
+
 class EventType(enum.Enum):
     """
     事件类型枚举

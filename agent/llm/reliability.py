@@ -2,19 +2,22 @@
 
 import asyncio
 import contextvars
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import hashlib
 import logging
 import queue
 import random
 import threading
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import httpx
 from langchain_openai import ChatOpenAI
 from pydantic import Field, PrivateAttr
+
+from agent.llm.openai import create_openai_llm
+from config import runtime
 
 logger = logging.getLogger(__name__)
 _slots = threading.BoundedSemaphore(16)
@@ -174,9 +177,7 @@ class ReliableChatOpenAI(ChatOpenAI):
     _fallback: ChatOpenAI | None = PrivateAttr(default=None)
 
     def _attempts(self, messages, stop, streaming, **kwargs):
-        from config import runtime
         if self._runtime_revision >= 0 and self._runtime_revision != runtime.revision:
-            from agent.llm.openai import create_openai_llm
             yield from create_openai_llm()._attempts(messages, stop, streaming, **kwargs)
             return
         from agent.media.images import adapt_messages

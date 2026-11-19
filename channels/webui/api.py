@@ -1,24 +1,30 @@
 """Authenticated, same-origin API for the single LemonClaw owner."""
 
 import asyncio
-from dataclasses import asdict
 import hashlib
 import hmac
 import json
-from pathlib import Path
 import secrets
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from agent.media.images import register_image
+from agent.questions import validate_answers
+from channels.bus import EventType, get_bus
+from channels.device.feishu import sync_owner_question
 from channels.webui import state
-from config import get_global_config
-from config import runtime
-from dao.db import get_connection, get_db_path
+from channels.webui.management import operation
+from channels.webui.packages import MAX_BYTES, install, stage
+from config import get_global_config, runtime
+from dao.attachment import AttachmentDAO
+from dao.db import get_connection
+from dao.question import QuestionDAO
 from dao.webui import WebStore
 
 OWNER = dict(source="webui", session_key="session-default", _webui_owner=True)
@@ -159,8 +165,6 @@ def create_app(dist: Path):
 
     @app.post("/api/v1/conversation/messages", status_code=202)
     def send(data: Message):
-        from channels.bus import get_bus, EventType
-        from dao.attachment import AttachmentDAO
 
         attachments = []
         for aid in data.attachments:
@@ -217,8 +221,6 @@ def create_app(dist: Path):
 
     @app.post("/api/v1/questions/{qid}/{action}")
     async def answer(qid: str, action: str, request: Request):
-        from dao.question import QuestionDAO
-        from agent.questions import validate_answers
 
         store = QuestionDAO()
         row = store.get(qid)
@@ -236,7 +238,6 @@ def create_app(dist: Path):
             raise HTTPException(404)
         store.submit(qid, result)
         row = store.get(qid)
-        from channels.device.feishu import sync_owner_question
 
         asyncio.create_task(asyncio.to_thread(sync_owner_question, row))
         state.emit("questions", {"question_id": qid, "status": row["status"]})
@@ -255,8 +256,6 @@ def create_app(dist: Path):
 
     @app.post("/api/v1/attachments")
     async def upload(request: Request):
-        from dao.attachment import AttachmentDAO
-        from agent.media.images import register_image
 
         cfg = get_global_config()
         limit = cfg.FEISHU_MAX_DOWNLOAD_MB * 1024 * 1024
@@ -286,7 +285,6 @@ def create_app(dist: Path):
 
     @app.get("/api/v1/attachments/{aid}")
     def download(aid: str):
-        from dao.attachment import AttachmentDAO
 
         # Owner can download registered shared attachments, never arbitrary paths.
         with get_connection() as c:
@@ -305,7 +303,6 @@ def create_app(dist: Path):
 
     @app.post("/api/v1/skills/packages")
     async def package_upload(request: Request):
-        from channels.webui.packages import stage, MAX_BYTES
 
         data = bytearray()
         async for chunk in request.stream():
@@ -317,7 +314,6 @@ def create_app(dist: Path):
     @app.post("/api/v1/skills/packages/{token}/install")
     async def package_install(token: str, request: Request):
         require_idle()
-        from channels.webui.packages import install
 
         data = await request.json()
         with state.mutation_lock:
@@ -326,7 +322,6 @@ def create_app(dist: Path):
     @app.api_route("/api/v1/manage/{kind}", methods=["GET", "POST"])
     @app.api_route("/api/v1/manage/{kind}/{item_id:path}", methods=["GET", "PUT", "DELETE", "POST"])
     async def manage(kind: str, request: Request, item_id: str = ""):
-        from channels.webui.management import operation
 
         data = (
             await request.json()

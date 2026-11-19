@@ -17,6 +17,9 @@
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import SystemMessage
 
+from agent.skill import get_skill_manager
+from config import get_global_config
+
 
 class MemoryMiddleware(AgentMiddleware):
     """每次模型调用前注入技能目录和活跃技能全文。"""
@@ -31,9 +34,7 @@ class MemoryMiddleware(AgentMiddleware):
         # 技能摘要 + 活跃全文：每轮现算（不缓存）--本回合 load_skill/unload_skill/enable/disable 会改变
         manager = self.skill_manager
         if self.live_config:
-            from config import get_global_config
             cfg = get_global_config()
-            from agent.skill import get_skill_manager
             manager = get_skill_manager() if cfg.ENABLE_SKILLS else None
         skill_summary = manager.get_skill_summary_text() if manager else ""
         active_section = manager.build_active_section() if manager else ""
