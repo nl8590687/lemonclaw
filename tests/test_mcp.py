@@ -37,6 +37,17 @@ from agent.questions import begin_question_turn, parse_terminal, reset_question_
 from dao.question import QuestionDAO
 
 
+@pytest.mark.parametrize("kind", ["http", "sse"])
+def test_transport_accepts_empty_saved_auth(kind):
+    connection = MCPConnection(
+        "demo", "https://example.com/mcp", {"X-Test": "credential"}, 10, 10, 20000,
+        options={"transport": kind, "auth": {}},
+    )
+    transport = connection._transport()
+    assert transport.auth is None
+    assert transport.headers["X-Test"] == "credential"
+
+
 @pytest.fixture
 def database(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

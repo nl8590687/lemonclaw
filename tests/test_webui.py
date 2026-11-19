@@ -493,7 +493,9 @@ def test_mcp_configuration_preserves_hidden_credentials(web, monkeypatch):
         ).status_code
         == 200
     )
-    assert manager._load_mcp_json()["demo"]["env"]["API_KEY"] == "mcp-hidden-secret"
+    saved = manager._load_mcp_json()["demo"]
+    assert saved["env"]["API_KEY"] == "mcp-hidden-secret"
+    assert "auth" not in saved
     current = web.get(url).json()["revision"]
     assert web.request("DELETE", url + "/demo", json={"revision": revision}).status_code == 409
     assert web.request("DELETE", url + "/demo", json={"revision": current}).json()["saved"]

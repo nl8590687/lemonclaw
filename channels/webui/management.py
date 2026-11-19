@@ -213,8 +213,8 @@ def operation(kind, item_id, method, data):
                 raise ValueError("Invalid transport")
             previous = config.get(item_id, {})
             for sensitive in ("headers", "env", "auth"):
-                if sensitive not in value:
-                    value[sensitive] = previous.get(sensitive, {})
+                if sensitive not in value and sensitive in previous:
+                    value[sensitive] = previous[sensitive]
             if value.get("transport") == "stdio":
                 if not value.get("command"):
                     raise ValueError("stdio command required")

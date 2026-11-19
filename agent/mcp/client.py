@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock, Thread, current_thread
 from typing import Any
 
+from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 from langchain_core.messages import ToolMessage
 from langchain_core.messages.content import create_audio_block, create_file_block, create_image_block, create_text_block
 from mcp.types import (
@@ -82,7 +83,6 @@ class MCPConnection:
         self._idle.set()
 
     def _transport(self):
-        from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
         if self._target is not None:
             return self._target
         kind = self.options.get("transport", "stdio" if self.options.get("command") else "http")
@@ -91,9 +91,13 @@ class MCPConnection:
                                   env=self.options.get("env"), cwd=self.options.get("cwd"))
         if kind not in {"http", "streamable_http", "streamable-http", "sse"}:
             raise ValueError(f"不支持的 MCP transport: {kind}")
+        auth = self.options.get("auth")
+        # Earlier WebUI saves wrote an empty object for unconfigured auth.
+        if auth == {}:
+            auth = None
         if kind == "sse":
-            return SSETransport(self.url, headers=self.headers, auth=self.options.get("auth"))
-        return StreamableHttpTransport(self.url, headers=self.headers, auth=self.options.get("auth"),
+            return SSETransport(self.url, headers=self.headers, auth=auth)
+        return StreamableHttpTransport(self.url, headers=self.headers, auth=auth,
                                        max_sse_event_size=32 * 1024 * 1024)
 
     async def _serve(self):
