@@ -31,7 +31,7 @@ from PIL import Image
 import dao.db as db
 from agent.mcp.client import MCPConnection
 from agent.mcp.manager import MCPManager
-from agent.mcp.tools import MCPToolWrapper, create_protocol_tool
+from agent.mcp.tools import MCPToolWrapper
 from agent.media.images import REFS, adapt_messages
 from agent.questions import begin_question_turn, parse_terminal, reset_question_turn
 from dao.question import QuestionDAO
@@ -137,7 +137,11 @@ def test_resources_and_prompts(connection):
     assert str(connection.protocol('list_resources')[0].uri) == 'test://greeting'
     assert connection.protocol('read_resource', {'uri': 'test://greeting'})[0].text == 'hello resource'
     assert connection.protocol('list_prompts')[0].name == 'greet'
-    result = call(create_protocol_tool(connection, 'mcp__demo__protocol'), {'operation': 'get_prompt',
+    manager = MCPManager.__new__(MCPManager)
+    manager.max_tools = 100
+    manager._connections = {connection.server_id: connection}
+    protocol = next(tool for tool in manager.get_langchain_tools() if tool.name == 'mcp__demo__protocol')
+    result = call(protocol, {'operation': 'get_prompt',
                       'arguments': {'name': 'greet', 'arguments': {'name': 'Ada'}}})
     assert 'hello Ada' in connection.render(result.content)
 

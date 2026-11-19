@@ -14,13 +14,16 @@
 
 """Keep LemonClaw names/statistics while delegating schemas and content to LangChain."""
 import asyncio
+import json
 import re
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphInterrupt
+from mcp.types import EmbeddedResource, TextContent
 from pydantic import PrivateAttr
 
 from agent.mcp.client import truncate_text
@@ -94,16 +97,12 @@ def create_mcp_tools(manager):
     return manager.get_langchain_tools() if manager else []
 
 
-def create_protocol_tool(connection, tool_name, manager=None):
+def create_protocol_tool(connection, tool_name, manager):
     """Expose resources/prompts using the same scoped multimodal result path."""
-    import json
-    from types import SimpleNamespace
-
-    from mcp.types import EmbeddedResource
 
     def invoke(server_id, operation_name, arguments, call_id, _lc_config):
         operation = arguments['operation']
-        current = manager._connections.get(server_id) if manager else connection
+        current = manager._connections.get(server_id)
         if current is None:
             raise RuntimeError('MCP service is disconnected')
         result = current.protocol(operation, arguments.get('arguments'))
@@ -112,7 +111,6 @@ def create_protocol_tool(connection, tool_name, manager=None):
                                   structured_content=None, is_error=False)
             return connection._message(raw, tool_name, call_id)
         if operation == 'get_prompt':
-            from mcp.types import TextContent
             blocks = []
             if result.description:
                 blocks.append(TextContent(type='text', text=result.description))
