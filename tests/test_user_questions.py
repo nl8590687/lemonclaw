@@ -11,6 +11,8 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTr
 
 from agent.questions import QuestionSpec, parse_terminal, validate_answers
 from agent.tools.question_tool import ask_user_question
+from channels.device import feishu
+from dao import app_state
 from dao.question import QuestionDAO
 from tests.test_checkpoint import make_service, database  # noqa: F401
 
@@ -299,11 +301,17 @@ def test_webhook_cannot_answer_terminal_even_with_missing_source(database):
         service.close()
 
 
-def test_card_senders_use_native_sdk_shape(database):
-    from channels.device.feishu import FeishuMessageSender
-    store,row = card_row(database)
-    sender = object.__new__(FeishuMessageSender)
+@pytest.fixture
+def card_sender(database, monkeypatch):
+    monkeypatch.setattr(app_state, '_schema_ready', False)
+    sender = object.__new__(feishu.FeishuMessageSender)
     sender.client = MagicMock()
+    return sender
+
+
+def test_card_senders_use_native_sdk_shape(database, card_sender):
+    store,row = card_row(database)
+    sender = card_sender
     api = sender.client.im.v1.message
     api.create.return_value = SimpleNamespace(success=lambda:True,data=SimpleNamespace(message_id='new-card'))
     assert sender.send_question(row) == 'new-card'
@@ -315,6 +323,28 @@ def test_card_senders_use_native_sdk_shape(database):
     api.patch.return_value = SimpleNamespace(success=lambda:True)
     sender.close_question(dict(row,status='timeout'))
     assert '已超时' in api.patch.call_args.args[0].request_body.content
+
+
+def test_expired_card_is_skipped_on_later_syncs(database, card_sender, monkeypatch):
+    store, row = card_row(database)
+    store.cancel_session(row['session_key'])
+    patch_message = card_sender.client.im.v1.message.patch
+    patch_message.return_value = SimpleNamespace(
+        success=lambda: False, code=230031, msg='Message has expired', get_log_id=lambda: 'log-id'
+    )
+    monkeypatch.setattr(feishu, 'get_feishu_client', lambda: SimpleNamespace(sender=card_sender))
+    monkeypatch.setattr(feishu.state, 'enabled', True)
+    warning = MagicMock()
+    monkeypatch.setattr(feishu.lark.logger, 'warning', warning)
+
+    feishu._sync_pending_owner_questions()
+    feishu._sync_pending_owner_questions()
+
+    patch_message.assert_called_once()
+    warning.assert_called_once()
+    assert 'code=230031, msg=Message has expired, log_id=log-id' in warning.call_args.args[0]
+    assert app_state.get_state('question.card.' + row['question_id']) == 'expired'
+    assert store.get(row['question_id'])['status'] == 'cancelled'
 
 
 def test_send_failure_does_not_create_unbounded_wait(database):

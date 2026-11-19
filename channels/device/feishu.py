@@ -60,6 +60,8 @@ try:
         CreateMessageRequest,
         CreateMessageRequestBody,
         CreateMessageResponse,
+        PatchMessageRequest,
+        PatchMessageRequestBody,
     )
     HAS_LARK = True
 except ImportError:  # pragma: no cover - 缺包时占位
@@ -73,6 +75,8 @@ except ImportError:  # pragma: no cover - 缺包时占位
 _LARK_MISSING_MSG = (
     "lark-oapi 未安装，飞书功能不可用。请执行: pip install lark-oapi"
 )
+_MESSAGE_UPDATE_EXPIRED = 230031
+_QUESTION_CARD_EXPIRED = "expired"
 
 
 # 飞书文件上传 file_type 取值（以飞书开放平台文件上传接口为准）
@@ -202,15 +206,26 @@ class FeishuMessageSender:
         if not row.get('message_id'):
             return
         try:
-            from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+            state_key = 'question.card.' + row['question_id']
+            synced_status = get_state(state_key)
+            if synced_status == _QUESTION_CARD_EXPIRED:
+                return False
+            if synced_status == row['status']:
+                return True
             request = PatchMessageRequest.builder().message_id(row['message_id']).request_body(
                 PatchMessageRequestBody.builder().content(json.dumps(question_closed_card(row), ensure_ascii=False)).build()).build()
             response = self.client.im.v1.message.patch(request)
-            if not response.success():
-                lark.logger.warning('人工确认卡片状态更新失败')
-            return response.success()
-        except Exception:
-            lark.logger.warning('人工确认卡片状态更新失败')
+            if response.success():
+                set_state(state_key, row['status'])
+                return True
+            if response.code == _MESSAGE_UPDATE_EXPIRED:
+                set_state(state_key, _QUESTION_CARD_EXPIRED)
+            lark.logger.warning(
+                f'人工确认卡片状态更新失败: code={response.code}, msg={response.msg}, log_id={response.get_log_id()}'
+            )
+            return False
+        except Exception as exc:
+            lark.logger.warning(f'人工确认卡片状态更新异常: {type(exc).__name__}: {exc}')
             return False
 
     def add_reaction(self, message_id: str, emoji_type: str) -> str | None:
@@ -1210,8 +1225,8 @@ def sync_owner_question(row):
     if not row or row['status'] == 'pending' or not row.get('message_id'):
         return
     client = get_feishu_client()
-    if client is not None and client.sender.close_question(row):
-        set_state('question.card.' + row['question_id'], row['status'])
+    if client is not None:
+        client.sender.close_question(row)
 
 
 _question_sync_lock = threading.Lock()
@@ -1235,6 +1250,4 @@ def _sync_pending_owner_questions():
     with get_connection() as conn:
         ids = [r[0] for r in conn.execute("SELECT question_id FROM user_questions WHERE status!='pending' AND message_id IS NOT NULL ORDER BY deadline DESC LIMIT 100")]
     for qid in ids:
-        row = store.get(qid)
-        if row and get_state('question.card.' + qid) != row['status']:
-            sync_owner_question(row)
+        sync_owner_question(store.get(qid))
