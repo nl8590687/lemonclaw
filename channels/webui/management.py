@@ -47,17 +47,16 @@ def operation(kind, item_id, method, data):
 
         tools = state.service.tools if state.service else []
         tools = list(tools.values()) if isinstance(tools, dict) else list(tools)
+        tool_catalog = []
+        for tool in tools:
+            schema = tool.tool_call_schema
+            tool_catalog.append(dict(
+                name=tool.name,
+                description=tool.description,
+                schema=schema if isinstance(schema, dict) else schema.model_json_schema(),
+            ))
         return dict(
-            tools=[
-                dict(
-                    name=t.name,
-                    description=t.description,
-                    schema=t.args_schema.model_json_schema()
-                    if hasattr(t.args_schema, "model_json_schema")
-                    else t.args_schema or {},
-                )
-                for t in tools
-            ],
+            tools=tool_catalog,
             node_schema=NodeConfig.model_json_schema(),
             workflow_schema=WorkflowSpec.model_json_schema(),
             skills=[s.to_dict() for s in get_skill_manager().list_skills()],

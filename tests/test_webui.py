@@ -31,6 +31,7 @@ from agent.mcp import get_mcp_manager
 from agent.questions import actor_matches
 from agent.runtime_middleware import RuntimeConfigurationMiddleware
 from agent.skill import _get_skill_dir, get_skill_manager
+from agent.tools.question_tool import ask_user_question
 from agent.workflow import get_workflow_manager
 from agent.workflow.builder import WorkflowBuilder
 from agent.workflow.manager import WorkflowManager
@@ -113,6 +114,15 @@ def test_static_javascript_media_type(web, monkeypatch):
     response = web.get("/assets/app.js")
     assert response.status_code == 200
     assert response.headers["content-type"].split(";")[0] == "text/javascript"
+
+
+def test_workflow_catalog_excludes_injected_tool_runtime(web):
+    state.service.tools = [ask_user_question]
+    unlock(web)
+    response = web.get("/api/v1/manage/catalog")
+    assert response.status_code == 200, response.text
+    properties = response.json()["tools"][0]["schema"]["properties"]
+    assert set(properties) == {"reason", "questions", "timeout_seconds"}
 
 
 def test_auth_origin_logout_and_rotation(web):

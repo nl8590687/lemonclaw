@@ -570,6 +570,7 @@ onMounted(load);
         </div>
         <div class="canvas">
           <VueFlow
+            :key="current.workflow_id || 'draft'"
             v-model:nodes="nodes"
             v-model:edges="edges"
             fit-view-on-init
