@@ -7,6 +7,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openviking import OpenVikingCommitPolicy, OpenVikingRetriever, OpenVikingSessionRecorder
 from openviking_sdk import SyncHTTPClient
+from openviking_sdk.errors import OpenVikingError
 
 from config.runtime import redact
 
@@ -45,6 +46,9 @@ class OpenVikingMemory(AgentMiddleware):
                 self._initialize()
                 documents = self._retriever.invoke(redact(turn["query"]))
                 turn["memory"] = "\n\n".join(doc.page_content for doc in documents)[:6000]
+            except OpenVikingError as exc:
+                reason = " ".join(redact(exc.message).splitlines())[:300]
+                logger.warning("OpenViking recall failed (%s): %s", exc.code, reason)
             except Exception as exc:
                 logger.warning("OpenViking recall failed (%s)", type(exc).__name__)
         messages = list(request.messages)
