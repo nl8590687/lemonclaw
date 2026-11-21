@@ -32,6 +32,7 @@ from agent.history import protected_boundary, trim_oversized
 from agent.llm import BASE_SYSTEM_PROMPT, create_openai_llm, get_system_prompt
 from agent.mcp import get_mcp_manager
 from agent.memory import MemoryMiddleware, get_memory_manager
+from agent.memory.openviking import OpenVikingMemory, recall_turn
 from agent.questions import (
     actor_matches,
     begin_question_turn,
@@ -99,7 +100,7 @@ _RESUME_TRIGGERS = {
 class AgentService:
     def __init__(self):
         config = get_global_config()
-        self.memory = get_memory_manager() if config.ENABLE_MEMORY else None
+        self._configure_memory(config)
         if self.memory:
             self.memory.on_session_start()
         # 【新增】技能系统
@@ -142,8 +143,23 @@ class AgentService:
         }
 
     def _create_tool_list(self) -> dict[str, Any]:
-        tools = create_tool_list()
+        tools = create_tool_list(include_memory=self.openviking is None)
         return tools
+
+    def _configure_memory(self, config):
+        settings = (
+            (config.OPENVIKING_BASE_URL, config.OPENVIKING_API_KEY)
+            if getattr(config, "ENABLE_OPENVIKING", False) else None
+        )
+        if settings != getattr(self, "_openviking_settings", None):
+            replacement = OpenVikingMemory(settings[0], settings[1].get_secret_value()) if settings else None
+            if getattr(self, "openviking", None):
+                self.openviking.close()
+            self.openviking = replacement
+        elif not settings:
+            self.openviking = None
+        self._openviking_settings = settings
+        self.memory = get_memory_manager() if config.ENABLE_MEMORY and not settings else None
 
     def run(self, input_msg: str, context: dict, out_chan: BaseOutChannel | None = None,
             attachments: list[dict[str, Any]] | None = None, session_key: str | None = None):
@@ -218,7 +234,7 @@ class AgentService:
                 resume_value = mcp_resume_value(resume_row)
             result, notifications = self._invoke_agent(
                 Command(resume=resume_value) if resume_row else {"messages": messages},
-                context, out_chan,
+                context, out_chan, input_msg,
             )
         except GraphRecursionError:
             out_chan.write_system_error(f"已达到最大迭代次数（{self.max_iterations}），本轮结束。")
@@ -236,16 +252,33 @@ class AgentService:
             if context.get("source") == "feishu":
                 from channels.device.feishu import discard_pending_images
                 discard_pending_images(context.get("open_id"), context.get("chat_id"), selected)
-        return self._complete_result(result, notifications, context, out_chan, resume_row, received_event_type)
+        completed = self._complete_result(result, notifications, context, out_chan, resume_row, received_event_type)
+        openviking = getattr(self, "openviking", None)
+        if openviking and self._is_memory_input(context) and not completed.get("__interrupt__"):
+            messages = completed.get("messages", [])
+            message = messages[-1] if messages else None
+            if (isinstance(message, AIMessage) and isinstance(message.content, str)
+                    and message.content.strip() and completed["reply_required"] and input_msg.strip()):
+                openviking.record(self.session_id, input_msg, message.content)
+        return completed
 
     @staticmethod
     def _is_resume_trigger(input_msg: str) -> bool:
         normalized = input_msg.strip().lower().rstrip("。.!！?？")
         return normalized in _RESUME_TRIGGERS
 
-    def _invoke_agent(self, graph_input, context: dict, out_chan: BaseOutChannel):
+    @staticmethod
+    def _is_memory_input(context: dict) -> bool:
+        return context.get("_event_type", context.get("source", "terminal")) in (
+            "terminal", "lark_message", "feishu", "webui"
+        )
+
+    def _invoke_agent(self, graph_input, context: dict, out_chan: BaseOutChannel, user_input: str = ""):
         callback = StreamingCallback(out_chan)
         notifications, notification_token = begin_notifications(out_chan, context)
+        recall_token = recall_turn.set(
+            {"query": user_input} if user_input.strip() and self._is_memory_input(context) else None
+        )
         try:
             result = self.agent.invoke(
                 graph_input,
@@ -261,6 +294,7 @@ class AgentService:
                 durability="sync",
             )
         finally:
+            recall_turn.reset(recall_token)
             reset_notifications(notification_token)
         self._update_stats(callback)
         context["tokens"] = callback.tokens
@@ -414,7 +448,10 @@ class AgentService:
         技能开关、摘要与活跃全文由中间件在每次模型调用前读取。"""
         live_config = getattr(get_global_config(), "ENABLE_WEBUI", False) and available()
         need_mw = bool(self.memory or self.skill_manager or live_config)
-        live = [RuntimeConfigurationMiddleware()] if live_config else []
+        openviking = getattr(self, "openviking", None)
+        live = [RuntimeConfigurationMiddleware(include_memory=openviking is None)] if live_config else []
+        if openviking:
+            live.append(openviking)
         if not need_mw:
             self._middleware = None
             return live
@@ -443,7 +480,11 @@ class AgentService:
 
     def close(self):
         """关闭主 Agent checkpoint 连接，不删除持久历史。"""
-        self.checkpointer.close()
+        try:
+            if getattr(self, "openviking", None):
+                self.openviking.close()
+        finally:
+            self.checkpointer.close()
 
     def _rebuild_agent(self):
         """仅清理当前 thread，复用持久 saver，并重建中间件与统计。"""

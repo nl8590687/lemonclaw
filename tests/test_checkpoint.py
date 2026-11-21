@@ -10,16 +10,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.documents import Document
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
+from pydantic import SecretStr
 from typing import TypedDict
 
 import dao.db as db
 from agent.agent import AgentService
 from agent.checkpoint import PersistentSaver
+from agent.memory import openviking
 from agent.workflow.runner import WorkflowRunner
 
 
@@ -73,6 +76,32 @@ def test_restart_history_and_reset_isolation(database):
         assert second.checkpointer.conn.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
     finally:
         second.close()
+
+
+def test_openviking_records_main_turn_without_persisting_recalled_text(database, monkeypatch):
+    client = MagicMock()
+    retriever = MagicMock()
+    retriever.invoke.return_value = [Document(page_content="Previously remembered preference")]
+    recorder = MagicMock()
+    monkeypatch.setattr(openviking, "SyncHTTPClient", MagicMock(return_value=client))
+    monkeypatch.setattr(openviking, "OpenVikingRetriever", MagicMock(return_value=retriever))
+    monkeypatch.setattr(openviking, "OpenVikingSessionRecorder", MagicMock(return_value=recorder))
+    service = make_service()
+    service._configure_memory(SimpleNamespace(
+        ENABLE_MEMORY=True, ENABLE_OPENVIKING=True,
+        OPENVIKING_BASE_URL="http://openviking:1933", OPENVIKING_API_KEY=SecretStr("example-key"),
+    ))
+    try:
+        service._rebuild_agent()
+        assert service.memory is None
+        result = service.run("Remember blue", {"_event_type": "webui"})
+        retriever.invoke.assert_called_once_with("Remember blue")
+        session, messages = recorder.record.call_args.args
+        assert session == "lemonclaw-session-default"
+        assert [message.content for message in messages] == ["Remember blue", "回答"]
+        assert [message.content for message in result["messages"]] == ["Remember blue", "回答"]
+    finally:
+        service.close()
 
 
 class WorkflowState(TypedDict):

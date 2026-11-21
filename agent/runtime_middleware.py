@@ -11,8 +11,9 @@ from config import get_global_config, runtime
 
 
 class RuntimeConfigurationMiddleware(AgentMiddleware):
-    def __init__(self, allowed_names=None):
+    def __init__(self, allowed_names=None, *, include_memory=True):
         self.allowed_names = None if allowed_names is None else set(allowed_names)
+        self.include_memory = include_memory
         self.revision = runtime.revision
         self._live_tools = None
 
@@ -35,7 +36,7 @@ class RuntimeConfigurationMiddleware(AgentMiddleware):
                         connection.call_timeout = cfg.MCP_CALL_TIMEOUT
                         connection.result_max_chars = cfg.MCP_RESULT_MAX_CHARS
 
-            tools = create_tool_list()
+            tools = create_tool_list(include_memory=self.include_memory)
             self._live_tools = {t.name: t for t in tools if self.allowed_names is None or t.name in self.allowed_names}
             self.revision = runtime.revision
         return self._live_tools
