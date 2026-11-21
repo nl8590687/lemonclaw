@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage } from "element-plus";
 import elementEnglish from "element-plus/es/locale/lang/en";
@@ -70,24 +70,28 @@ async function login() {
     ElMessage.error(String(e));
   }
 }
+let followLatest = true;
+function updateScrollPosition() {
+  const history = chatHistory.value;
+  if (history) {
+    followLatest = history.scrollHeight - history.clientHeight - history.scrollTop <= 48;
+  }
+}
 function scrollToLatest() {
   const history = chatHistory.value;
-  if (history) history.scrollTop = history.scrollHeight;
+  if (history && followLatest) history.scrollTop = history.scrollHeight;
 }
-watch(chatHistory, scrollToLatest, { flush: "post" });
+watch(chatHistory, () => {
+  followLatest = true;
+  scrollToLatest();
+}, { flush: "post" });
+watch([messages, () => messages.value.length, stream], scrollToLatest, { flush: "post" });
 async function refresh() {
   try {
     const c = await api("conversation/context");
-    const history = chatHistory.value;
-    const nearLatest =
-      history && history.scrollHeight - history.clientHeight - history.scrollTop <= 48;
     messages.value = c.messages;
     busy.value = c.busy;
     stream.value = "";
-    if (nearLatest) {
-      await nextTick();
-      scrollToLatest();
-    }
   } catch (e) {
     ElMessage.error(String(e));
   }
@@ -150,6 +154,7 @@ async function send() {
       ...payload,
       request_id: pendingRequest.id,
     });
+    followLatest = true;
     messages.value.push({ id: pendingRequest.id, role: "human", content });
     pendingRequest = null;
     text.value = "";
@@ -281,7 +286,7 @@ onBeforeUnmount(() => {
           {{ t("streamDisconnected") }}
         </div>
         <div v-if="tab === 'chat'" class="chat-page">
-          <div ref="chatHistory" class="chat-history">
+          <div ref="chatHistory" class="chat-history" @scroll.passive="updateScrollPosition">
             <div class="chat-intro">
               <h1>{{ t("currentContext") }}</h1>
               <p>{{ t("contextNote") }}</p>
