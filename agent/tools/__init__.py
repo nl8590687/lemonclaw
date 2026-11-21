@@ -68,7 +68,7 @@ __all__ = [
 ]
 
 
-def create_tool_list() -> dict[str, Any]:
+def create_tool_list(*, include_memory: bool = True) -> dict[str, Any]:
     """
     创建所有工具
     """
@@ -105,7 +105,7 @@ def create_tool_list() -> dict[str, Any]:
     tools.extend(create_cron_tools(get_cron_manager()))
 
     # 持久化记忆读写工具（与 AgentService 共享同一个 MemoryManager 单例）
-    if config.ENABLE_MEMORY:
+    if config.ENABLE_MEMORY and include_memory:
         tools.extend(create_memory_tools(get_memory_manager()))
 
     # 技能系统工具（与 AgentService 共享同一个 SkillManager 单例）

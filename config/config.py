@@ -120,6 +120,9 @@ class GlobalConfig(BaseSettings):
 
     # 持久化记忆
     ENABLE_MEMORY: bool = str(os.environ.get("ENABLE_MEMORY", "true")).lower() == "true"
+    ENABLE_OPENVIKING: bool = False
+    OPENVIKING_BASE_URL: str = ""
+    OPENVIKING_API_KEY: SecretStr = SecretStr("")
     MEMORY_MAX_CONTEXT_TOKENS: int = int(os.environ.get("MEMORY_MAX_CONTEXT_TOKENS", 1500))
     MEMORY_RECENT_SESSIONS: int = int(os.environ.get("MEMORY_RECENT_SESSIONS", 3))
     MEMORY_MAX_SEARCH_CHUNKS: int = int(os.environ.get("MEMORY_MAX_SEARCH_CHUNKS", 100))

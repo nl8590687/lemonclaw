@@ -4,7 +4,6 @@ import loop
 from agent.agent import _create_agent
 from agent.llm import create_openai_llm, get_system_prompt
 from agent.mcp import get_mcp_manager
-from agent.memory import get_memory_manager
 from agent.skill import get_skill_manager
 from agent.workflow import get_workflow_manager
 from channels.device.feishu import set_feishu_client
@@ -32,7 +31,7 @@ def refresh_agent(service):
     previous = getattr(service, "_web_resources", {})
     current = resource_snapshot()
     service.llm = create_openai_llm()
-    service.memory = get_memory_manager() if cfg.ENABLE_MEMORY else None
+    service._configure_memory(cfg)
     service.skill_manager = get_skill_manager() if cfg.ENABLE_SKILLS else None
     if service.skill_manager:
         sm = service.skill_manager
