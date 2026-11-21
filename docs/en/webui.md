@@ -41,6 +41,8 @@ docker run --name lemonclaw -p 127.0.0.1:8080:8080 \
 
 The existing webhook port remains separate. For remote access, configure HTTPS on a reverse proxy and preserve the request host; the API checks same-origin mutations. The WebUI controls the same tools and files as the Agent, so restrict access to the owner.
 
+Live updates use SSE at `/api/v1/events`. Nginx honors the application's `X-Accel-Buffering: no` header by default. If the proxy ignores that header, set `proxy_buffering off` for this route.
+
 ## Conversation and management
 
 - Chat streams public replies, accepts images/files, and shows pending human questions. While WebUI is active, the terminal also displays shared questions and their final status. The first valid answer from the terminal, Feishu, or WebUI wins. Failed Feishu card updates are retried.

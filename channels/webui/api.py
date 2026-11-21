@@ -153,6 +153,7 @@ def create_app(dist: Path):
     @app.get("/api/v1/bootstrap")
     def bootstrap():
         return dict(
+            event_cursor=WebStore().latest_event_id(),
             busy=state.busy.is_set(),
             context=state.context(),
             questions=state.questions(),
@@ -214,7 +215,9 @@ def create_app(dist: Path):
                 yield ": heartbeat\n\n"
                 await asyncio.sleep(0.35)
 
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+        )
 
     @app.get("/api/v1/questions")
     def questions():
