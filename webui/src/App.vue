@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage } from "element-plus";
 import elementEnglish from "element-plus/es/locale/lang/en";
@@ -35,7 +35,7 @@ const { t, locale } = useI18n(),
   text = ref(""),
   attachments = ref<any[]>([]),
   fileInput = ref<HTMLInputElement | null>(null),
-  chatEnd = ref<HTMLElement | null>(null),
+  chatHistory = ref<HTMLElement | null>(null),
   answerFields = ref<any>({}),
   loading = ref(false),
   connected = ref(true);
@@ -70,14 +70,28 @@ async function login() {
     ElMessage.error(String(e));
   }
 }
+let followLatest = true;
+function updateScrollPosition() {
+  const history = chatHistory.value;
+  if (history) {
+    followLatest = history.scrollHeight - history.clientHeight - history.scrollTop <= 48;
+  }
+}
+function scrollToLatest() {
+  const history = chatHistory.value;
+  if (history && followLatest) history.scrollTop = history.scrollHeight;
+}
+watch(chatHistory, () => {
+  followLatest = true;
+  scrollToLatest();
+}, { flush: "post" });
+watch([messages, () => messages.value.length, stream], scrollToLatest, { flush: "post" });
 async function refresh() {
   try {
     const c = await api("conversation/context");
     messages.value = c.messages;
     busy.value = c.busy;
     stream.value = "";
-    await nextTick();
-    chatEnd.value?.scrollIntoView({ behavior: "smooth" });
   } catch (e) {
     ElMessage.error(String(e));
   }
@@ -89,14 +103,14 @@ async function init() {
     messages.value = b.context;
     questions.value = b.questions;
     busy.value = b.busy;
-    startEvents();
+    startEvents(b.event_cursor);
   } catch {
     authenticated.value = false;
   }
 }
-function startEvents() {
+function startEvents(cursor: number) {
   events?.close();
-  events = new EventSource("/api/v1/events");
+  events = new EventSource(`/api/v1/events?after=${cursor}`);
   events.addEventListener("update", (e: any) => {
     connected.value = true;
     const v = JSON.parse(e.data);
@@ -140,6 +154,7 @@ async function send() {
       ...payload,
       request_id: pendingRequest.id,
     });
+    followLatest = true;
     messages.value.push({ id: pendingRequest.id, role: "human", content });
     pendingRequest = null;
     text.value = "";
@@ -271,7 +286,7 @@ onBeforeUnmount(() => {
           {{ t("streamDisconnected") }}
         </div>
         <div v-if="tab === 'chat'" class="chat-page">
-          <div class="chat-history">
+          <div ref="chatHistory" class="chat-history" @scroll.passive="updateScrollPosition">
             <div class="chat-intro">
               <h1>{{ t("currentContext") }}</h1>
               <p>{{ t("contextNote") }}</p>
@@ -370,7 +385,6 @@ onBeforeUnmount(() => {
                 t("cancel")
               }}</el-button>
             </div>
-            <div ref="chatEnd" />
           </div>
           <form class="composer" @submit.prevent="send">
             <div class="attachment-list">

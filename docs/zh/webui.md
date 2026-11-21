@@ -41,6 +41,8 @@ docker run --name lemonclaw -p 127.0.0.1:8080:8080 \
 
 Webhook 端口仍独立。远程访问可用反向代理提供 HTTPS，并保留请求 Host；API 会校验写操作来源。WebUI 能操作 Agent 的工具和文件，访问权限应限于主人。
 
+实时会话使用 `/api/v1/events` 的 SSE 流。Nginx 默认会采纳应用发送的 `X-Accel-Buffering: no`。如果代理忽略了这个响应头，请对该路由设置 `proxy_buffering off`。
+
 ## 会话与管理
 
 - 对话流式显示公开回复，支持图片、文件及人工确认。WebUI 启用时，终端也会显示同一问题和结束状态。终端、飞书、WebUI 三端的首个有效答案生效。飞书卡片更新失败会重试。

@@ -26,6 +26,10 @@ class WebStore:
             c.execute("DELETE FROM webui_events WHERE id < ?", (row.lastrowid - 5000,))
             return row.lastrowid
 
+    def latest_event_id(self):
+        with get_connection() as c:
+            return c.execute("SELECT COALESCE(MAX(id), 0) FROM webui_events").fetchone()[0]
+
     def events(self, after, limit=200):
         with get_connection() as c:
             return [
